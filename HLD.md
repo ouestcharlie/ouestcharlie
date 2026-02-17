@@ -24,12 +24,28 @@ Key design decisions:
 - **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharly/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
 - **Agent discovery**: when an agent starts, it reads the config, connects to its assigned backend(s), and reads the root manifest to understand the current state. From there, the hierarchical manifest tree guides all operations.
 
+## EXIF and the Metadata Pipeline
+
+Photo files are **immutable** — they are never modified after ingestion. EXIF data embedded in images (date, GPS, camera, orientation, etc.) is treated as **read-only input** to the metadata pipeline:
+
+1. **Extraction**: At ingestion, a housekeeping agent reads EXIF from the image file and writes it into an XMP sidecar. This is the only time the image file is read for metadata.
+2. **Enrichment**: Agents add new metadata (faces, descriptions, scene tags) to the XMP sidecar. The image file is read for pixel analysis but never written to.
+3. **Consolidation**: Manifests aggregate XMP sidecars, never EXIF directly.
+
+The XMP sidecar is the **single source of truth** for all queryable metadata. Agents and consumers never need to parse EXIF from images — they only read XMP and manifests.
+
+This has key consequences:
+- **No image corruption risk** — original files are never written to
+- **Format independence** — EXIF parsing (JPEG, HEIC, RAW, etc.) happens once at extraction, not on every query
+- **Recoverable metadata** — if an XMP sidecar is lost, a housekeeping agent can re-extract EXIF from the image and enrichment agents can re-enrich
+- **Negligible storage overhead** — EXIF duplication in XMP is tiny compared to image size
+
 ## Hierarchical Metadata
 
 Photos are organized in folders (partitions). Each folder contains:
 
-- **Photo files**: the original images
-- **Sidecar XMP files**: per-photo metadata (EXIF, tags, faces, descriptions) stored in standard XMP format
+- **Photo files**: the original images (immutable)
+- **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) stored in standard XMP format
 - **Folder manifest**: a consolidated metadata file summarizing all photos in the folder — think of it as a partition-level statistics file (min/max dates, list of people, location bounding box, photo count, etc.)
 
 The folder manifest is the key enabler for efficient querying without a central database. It aggregates individual XMP metadata into a single file per folder, allowing agents to make pruning decisions by reading manifests alone, without scanning every photo.

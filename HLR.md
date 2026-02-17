@@ -9,12 +9,14 @@ No central database: Metadata lives alongside data in a hierarchical folder stru
 
 Stateless compute (agent model): Compute is decoupled from storage. Agents are independent workers that read/write to the shared storage layer. This enables horizontal scaling and flexibility.
 
+Immutable photos: Photo files are never modified after ingestion. Embedded EXIF data is treated as read-only input — it is extracted into sidecar metadata but never written back to the image. This eliminates corruption risk and makes photos safe to replicate or deduplicate.
+
 # Agent Taxonomy
 Three categories of agents:
 
 | Type | Purpose | Trigger |
 |---|---|---|
-| Housekeeping | Maintain metadata consistency, generate thumbnails | Batch/lazy |
+| Housekeeping | Maintain metadata consistency, generate thumbnails, find duplicates | Batch/lazy |
 | Data enrichment | Add semantic metadata (face recognition, scene classification, descriptions) | Batch/traversal |
 | Data consumption | Query & browse photos by filters (person, date, location, etc.) | User-facing (web/mobile) |
 
