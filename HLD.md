@@ -1,5 +1,29 @@
 # High Level Design
 
+## Root Configuration (lightweight catalog)
+
+Unlike Iceberg which requires a catalog service to locate tables, OuEstCharly uses a **local configuration file** as its entry point. This preserves the "no central database" principle while giving agents a way to discover storage backends and root manifests.
+
+The configuration lives on each device that runs agents:
+
+```
+~/.ouestcharly/config.json
+{
+  "backends": [
+    { "name": "local", "type": "filesystem", "root": "/Users/alice/Photos" },
+    { "name": "cloud", "type": "s3", "bucket": "alice-photos", "root": "/" },
+    { "name": "kdrive", "type": "kdrive", "root": "/Photos" }
+  ]
+}
+```
+
+Key design decisions:
+
+- **Each backend is independent**: every backend has its own root manifest and its own metadata tree. There is no cross-backend unified namespace — each is a self-contained photo collection.
+- **No shared catalog service**: the config file is local to the device. Two devices accessing the same S3 bucket each have their own config pointing to it. The bucket itself is the source of truth (via its root manifest), not the config.
+- **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharly/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
+- **Agent discovery**: when an agent starts, it reads the config, connects to its assigned backend(s), and reads the root manifest to understand the current state. From there, the hierarchical manifest tree guides all operations.
+
 ## Hierarchical Metadata
 
 Photos are organized in folders (partitions). Each folder contains:
