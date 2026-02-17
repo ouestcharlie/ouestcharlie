@@ -48,3 +48,54 @@ Querying photos across a large collection uses a multi-level pruning strategy in
 3. **XMP scan**: For folders that pass pruning, read individual XMP sidecars to evaluate the full predicate and return matching photos.
 
 This three-level approach (manifest → bloom filter → XMP) minimizes the number of file reads required, which is critical for performance on object storage where each read has latency cost.
+
+## Security and Access Control
+
+Security follows the **least privilege** principle from the HLR: each agent receives only the scope it needs. The approach differs between local and cloud storage.
+
+### Agent Scopes
+
+Each agent declares a required scope that defines what it can access:
+
+| Agent type | Photos | XMP metadata | Manifests | Thumbnails |
+|---|---|---|---|---|
+| Housekeeping | read | read/write | read/write | read/write |
+| Enrichment | read | read/write | read/write | - |
+| Consumption (browse) | read | read | read | read |
+| Ingestion | write | write | - | - |
+
+Scopes are enforced at the storage access layer, not within agents themselves — agents never interact with raw storage credentials directly.
+
+### Local Storage (laptop, mobile)
+
+On local devices, security relies on the **OS-level filesystem permissions** and the device's own protection:
+
+- **Filesystem permissions**: The photo library folder is owned by the application user. Agents run under the same user, scoped by the application layer.
+- **Encryption at rest**: Delegated to the OS (FileVault on macOS, file-based encryption on Android/iOS). No application-level encryption — it would add complexity without benefit since the threat model is device theft, which OS encryption already covers.
+- **Agent isolation**: On mobile, agents run within the app sandbox. On desktop, agents are threads/processes of the same application, and scope enforcement is in-process.
+
+### Cloud Storage (S3, OneDrive, Kdrive)
+
+On cloud providers, security relies on **scoped credentials** issued per agent:
+
+- **Credential vaulting**: A single master credential (e.g., S3 IAM user, OAuth refresh token) is stored securely on the user's device (OS keychain). It is never shared with agents directly.
+- **Scoped tokens**: Before an agent runs, the application mints a short-lived, scoped credential:
+  - *S3*: STS `AssumeRole` with an inline policy restricting to the required paths and actions (e.g., `s3:GetObject` on `photos/*` for a consumption agent)
+  - *OneDrive/Kdrive*: OAuth token with limited scope, or a shared link with read-only access for consumption agents
+- **Token lifetime**: Scoped tokens are short-lived (minutes to hours). If an agent is interrupted, its token expires naturally.
+- **Path-based scoping**: Agents can be restricted to specific folder subtrees, not just action types. For example, an enrichment agent processing `/2024/` photos gets no access to `/2025/`.
+
+### Encryption in Transit
+
+- Cloud storage: TLS enforced for all API calls (HTTPS). This is standard for S3, OneDrive, and Kdrive.
+- Local storage: Not applicable (no network transit).
+
+### Threat Model Summary
+
+| Threat | Local mitigation | Cloud mitigation |
+|---|---|---|
+| Unauthorized access | OS auth + filesystem permissions | Scoped short-lived tokens |
+| Data exfiltration by rogue agent | App sandbox / in-process scope check | IAM policy restricts paths + actions |
+| Credential theft | OS keychain | Master credential never leaves device; scoped tokens expire |
+| Data at rest exposure | OS-level disk encryption | Provider-side encryption (SSE-S3, OneDrive encryption) |
+| Man-in-the-middle | N/A (local) | TLS enforced |

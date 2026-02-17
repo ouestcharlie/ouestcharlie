@@ -21,3 +21,7 @@ Three categories of agents:
 # Ingestion Paths
 Interactive: Frontend app (e.g., mobile backup)
 Batch: Bulk import
+
+# Least privilege
+
+Agents only receive the required scope to act: read or write on metadata and pictures.
