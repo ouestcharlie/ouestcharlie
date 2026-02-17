@@ -11,6 +11,8 @@ Stateless compute (agent model): Compute is decoupled from storage. Agents are i
 
 Immutable photos: Photo files are never modified after ingestion. Embedded EXIF data is treated as read-only input — it is extracted into sidecar metadata but never written back to the image. This eliminates corruption risk and makes photos safe to replicate or deduplicate.
 
+Open standards and royalty-free formats: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
+
 # Agent Taxonomy
 Three categories of agents:
 
