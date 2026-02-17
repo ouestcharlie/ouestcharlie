@@ -91,6 +91,45 @@ The closest analogy is how Apache Iceberg disrupted data warehousing by making m
 
 6. **Open formats, no lock-in**: XMP is an ISO standard. JSON is universal. AVIF is royalty-free. A user can abandon OuEstCharly and still read all their metadata with any XMP-compatible tool (Lightroom, darktable, ExifTool).
 
+## UX Gap Analysis vs. Google Photos and Apple Photos
+
+Google Photos and Apple Photos set the consumer expectation for photo management UX. The table below maps their key features against OuEstCharly's current design, identifying what is covered, what is achievable within the architecture, and what is out of scope.
+
+| # | Feature | Google Photos | Apple Photos | OuEstCharly status |
+|---|---|---|---|---|
+| 1 | **Auto-backup from mobile** | Yes (background sync) | Yes (iCloud Photo Library) | **Planned** — ingestion agent on mobile, backup to any backend |
+| 2 | **Face recognition & grouping** | Yes (built-in ML) | Yes (on-device ML) | **Achievable** — enrichment agent writes face tags to XMP sidecars |
+| 3 | **Natural language search** | Yes ("dog on beach") | Yes (visual lookup) | **Achievable** — enrichment agent for scene/object descriptions + search over XMP tags |
+| 4 | **Smart albums / auto-categorization** | Yes (People, Places, Things) | Yes (People, Places, Memories) | **Designed** — smart albums as saved filters over XMP metadata |
+| 5 | **Manual albums** | Yes | Yes | **Designed** — `album/*` XMP tags + saved filter definitions |
+| 6 | **Memories / "On this day"** | Yes (auto-generated stories) | Yes (Memories with music) | **Designed** — consumption agent surfacing highlights from manifests |
+| 7 | **Shared albums** | Yes (link sharing, collaborative) | Yes (Shared Library, shared albums) | **Gap** — requires multi-user access control and shared album definitions |
+| 8 | **Photo editing** | Yes (built-in editor) | Yes (built-in editor) | **Out of scope** — OuEstCharly is a management/organization system, not an editor |
+| 9 | **Video support** | Yes (full video management) | Yes (full video management) | **Gap** — current design focuses on photos; video support (thumbnails, metadata extraction) needs design work |
+| 10 | **Live Photos / motion photos** | Yes | Yes | **Gap** — requires paired file handling (photo + video clip) |
+| 11 | **Map view** | Yes (GPS-based) | Yes (GPS-based) | **Achievable** — GPS coordinates are extracted to XMP; consumption agent renders map view |
+| 12 | **Timeline view** | Yes (scrollable by date) | Yes (Years/Months/Days) | **Achievable** — date metadata in manifests enables hierarchical timeline browsing |
+| 13 | **Trash / recently deleted** | Yes (60-day retention) | Yes (30-day retention) | **Gap** — needs soft-delete mechanism (tombstone in manifest or XMP marker) |
+| 14 | **Favorites** | Yes (star) | Yes (heart) | **Achievable** — `rating` or `favorite` tag in XMP sidecar |
+| 15 | **Deduplication** | Automatic | Automatic | **Designed** — SHA-256 content hash with three-level dedup |
+| 16 | **Cross-device sync** | Yes (seamless) | Yes (iCloud) | **Partial** — each device sees all backends, but real-time sync notification is a gap |
+| 17 | **Offline access** | Yes (cached originals/thumbnails) | Yes (optimized storage) | **Gap** — needs client-side caching strategy with local thumbnail/preview cache |
+| 18 | **Sharing to social / messaging** | Yes (deep integrations) | Yes (share sheet) | **Out of scope** — OS-level share sheet integration, not a core concern |
+
+### Summary
+
+**Covered by current design (8)**: Smart albums, manual albums, memories, face recognition, natural language search, deduplication, favorites, auto-backup — all achievable through the agent model and XMP metadata without architectural changes.
+
+**Achievable with consumption agent work (3)**: Map view, timeline view, cross-device sync — the metadata is already there, these are frontend/agent implementation tasks.
+
+**Gaps requiring design work (4)**: Shared albums, video support, live photos, trash/recently deleted, offline caching — these need new design decisions but are compatible with the architecture.
+
+**Out of scope (2)**: Photo editing and social sharing integrations — these are outside OuEstCharly's core mission of storage-agnostic photo organization.
+
+### Key Takeaway
+
+OuEstCharly's architecture can deliver ~80% of the consumer-expected feature set through its agent model and XMP metadata layer. The main gaps are collaborative features (shared albums), media type coverage (video, live photos), and client-side UX polish (offline cache, trash). None of these gaps require abandoning the core architecture — they are additive design work.
+
 ## Target Users
 
 - **Privacy-conscious users** leaving Google/Apple ecosystem
