@@ -54,6 +54,64 @@ The folder manifest is the key enabler for efficient querying without a central 
 
 Manifests are structured hierarchically: a parent folder's manifest consolidates its children's manifests, forming a metadata tree that mirrors the storage hierarchy.
 
+## Thumbnail Storage
+
+### Problem
+
+Each folder can contain many photos. Storing one thumbnail file per photo creates a proliferation of small files, which is costly on object storage (per-request latency and pricing) and clutters the folder structure.
+
+### Format Analysis
+
+| Format | Multi-image container | Random access to individual thumbnails | Compression | Platform support |
+|---|---|---|---|---|
+| Individual JPEG/WebP | N/A (one file per photo) | N/A | Good | Universal |
+| Sprite sheet (single WebP/JPEG) | Grid layout, one file | By pixel offset (requires decoding full image) | Good | Universal |
+| Multi-page TIFF | Yes | Yes, by IFD offset | Moderate (LZW) | Universal |
+| HEIF/HEIC | Yes (ISOBMFF container) | Yes, by item index | Excellent (HEVC) | iOS/macOS native, limited elsewhere |
+| **AVIF grid** | **Yes (ISOBMFF container)** | **Yes, each tile independently decodable** | **Excellent (AV1)** | **All major platforms** |
+
+### Decision: AVIF Grid Containers
+
+Each folder stores its thumbnails as a single AVIF file using the **grid layout** (M x N tiles). Each tile is an independent AV1 stream that can be decoded without reading the full container.
+
+**Advantages over alternatives:**
+- **vs. individual files**: Reduces file count from N to 1 per folder. Critical for object storage cost and latency.
+- **vs. sprite sheets**: Individual tiles can be decoded independently — no need to decode the entire image to extract one thumbnail. Better for progressive loading.
+- **vs. HEIF/HEIC**: AVIF is open and royalty-free (AV1-based), with broader cross-platform support. HEVC licensing is complex.
+- **vs. multi-page TIFF**: Better compression, smaller files.
+
+**Platform support (native, no additional dependencies):**
+- Android 12+ (Oct 2021)
+- iOS 16+ / macOS Ventura+ (Sep 2022)
+- Windows 11 22H2+
+- All major browsers: Chrome 85+, Firefox 93+, Safari 16+, Edge 90+
+- Linux: via [libavif](https://github.com/AOMediaCodec/libavif) and `avif-pixbuf-loader`
+
+**Reference implementation**: [libavif](https://github.com/AOMediaCodec/libavif) by the Alliance for Open Media — C library, cross-platform, supports grid encoding/decoding with per-tile random access.
+
+### Folder Structure with Thumbnails
+
+```
+/2024/vacation/
+├── .ouestcharly/
+│   ├── manifest.json
+│   └── thumbnails.avif      ← grid of all folder thumbnails
+├── IMG_001.jpg
+├── IMG_001.xmp
+├── IMG_002.heic
+├── IMG_002.xmp
+└── ...
+```
+
+The manifest records the grid layout (tile order mapping to photo files, grid dimensions, thumbnail resolution) so consumption agents can request specific tiles by index.
+
+**References:**
+- [AVIF specification - Alliance for Open Media](https://aomedia.org/specifications/avif/)
+- [libavif - GitHub](https://github.com/AOMediaCodec/libavif)
+- [AVIF browser support - Can I Use](https://caniuse.com/avif)
+- [AVIF - Wikipedia](https://en.wikipedia.org/wiki/AVIF)
+- [libavif-container](https://github.com/link-u/libavif-container) — AVIF container manipulation library
+
 ## Consistency Model
 
 Following Iceberg's approach, metadata updates use **optimistic concurrency** with **atomic commits**:
