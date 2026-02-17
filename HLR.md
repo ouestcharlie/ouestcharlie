@@ -3,7 +3,7 @@
 OuEstCharly is a decentralized photo management system designed around cheap cloud storage. The architecture is inspired by data lakehouse table formats (Iceberg, Delta).
 
 ## Key Architectural Principles
-Storage-agnostic: Supports local drive on laptop or mobile, and commodity object storage (S3, OneDrive, Infomaniak Kdrive) — no vendor lock-in.
+Storage-agnostic: Supports local drive on laptop or mobile, and commodity object storage (S3, Azure ADLS Gen2, GCS, OneDrive, Infomaniak Kdrive) — no vendor lock-in.
 
 No central database: Metadata lives alongside data in a hierarchical folder structure, similar to how Iceberg/Delta store manifest files within the data lake itself. This is a strong decoupling choice — the system is self-describing.
 
