@@ -112,6 +112,63 @@ The manifest records the grid layout (tile order mapping to photo files, grid di
 - [AVIF - Wikipedia](https://en.wikipedia.org/wiki/AVIF)
 - [libavif-container](https://github.com/link-u/libavif-container) — AVIF container manipulation library
 
+## Albums
+
+Albums are implemented as **XMP tags + saved filters**, reusing the existing metadata and pruning infrastructure. No new data structure or storage mechanism is introduced.
+
+### Smart Albums
+
+A smart album is a saved predicate evaluated at query time:
+
+```json
+{ "name": "Vacation 2024", "type": "smart", "filter": "date:2024 AND tag:travel" }
+```
+
+Smart albums are pure consumption queries — they produce results by traversing the manifest tree with the same pruning pipeline used for any filter (manifest pruning → bloom filter → XMP scan). They require zero additional storage or enrichment.
+
+### Manual Albums
+
+Adding a photo to a manual album writes an `album/<name>` tag to the photo's XMP sidecar. The album is then a smart filter over that tag:
+
+```json
+{ "name": "Birthday Party", "type": "manual", "filter": "tag:album/birthday-party" }
+```
+
+- **Add to album**: Enrichment-level operation — write `album/birthday-party` tag to XMP sidecar, update folder manifest (tag list + bloom filter).
+- **Remove from album**: Same operation in reverse — remove the tag, update manifest.
+- **Multi-album membership**: A photo can have multiple `album/*` tags. No file duplication.
+
+### Album Definitions Storage
+
+Album definitions live in `/.ouestcharly/albums.json` at the backend root, alongside the root manifest:
+
+```
+/.ouestcharly/
+├── root-manifest.json
+└── albums.json
+```
+
+```json
+{
+  "albums": [
+    { "name": "Vacation 2024", "type": "smart", "filter": "date:2024 AND tag:travel" },
+    { "name": "Birthday Party", "type": "manual", "filter": "tag:album/birthday-party" },
+    { "name": "Best of", "type": "smart", "filter": "rating >= 4" },
+    { "name": "Landscapes", "type": "smart", "filter": "scene:landscape" }
+  ]
+}
+```
+
+### Integration with Pruning Pipeline
+
+Album queries use the same three-level pruning as any other filter:
+
+1. **Manifest pruning**: The root manifest consolidates all tags including `album/*` tags. A folder whose manifest has no `album/birthday-party` tag is skipped entirely.
+2. **Bloom filters**: Album tags are included in the bloom filter for the `tag` field. High-cardinality album names are handled efficiently.
+3. **XMP scan**: For folders that pass pruning, XMP sidecars are scanned for the exact tag match.
+
+This means album browsing has the same performance characteristics as any other metadata query — no special-casing needed.
+
 ## Consistency Model
 
 Following Iceberg's approach, metadata updates use **optimistic concurrency** with **atomic commits**:

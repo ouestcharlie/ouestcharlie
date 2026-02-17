@@ -21,6 +21,16 @@ Three categories of agents:
 | Housekeeping | Maintain metadata consistency, generate thumbnails, find duplicates | Batch/lazy |
 | Data enrichment | Add semantic metadata (face recognition, scene classification, descriptions) | Batch/traversal |
 | Data consumption | Query & browse photos by filters (person, date, location, etc.) | User-facing (web/mobile) |
+| Data consumption | Memories: surface highlights like "on this day", notable trips, people milestones | User-facing (notifications, feed) |
+
+# Albums
+
+Albums are virtual collections implemented as XMP tags and saved filters — no separate data structure needed.
+
+- **Smart albums**: Saved predicates over existing metadata (e.g., "Vacation 2024" = `date in 2024 AND tag contains "travel"`). Pure read queries, zero additional storage.
+- **Manual albums**: Adding a photo to an album writes an `album:<name>` tag to its XMP sidecar. The album is then a filter: `tag contains "album:<name>"`. A photo can belong to multiple albums without copying.
+
+Album definitions are stored in `/.ouestcharly/albums.json` alongside the root manifest.
 
 # Ingestion Paths
 Interactive: Frontend app (e.g., mobile backup)
