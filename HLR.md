@@ -11,6 +11,8 @@ Stateless compute (agent model): Compute is decoupled from storage. Agents are i
 
 Immutable photos: Photo files are never modified after ingestion. Embedded EXIF data is treated as read-only input — it is extracted into sidecar metadata but never written back to the image. This eliminates corruption risk and makes photos safe to replicate or deduplicate.
 
+Content-based identity: Each photo is identified by a SHA-256 hash of its original file content, stored in the XMP sidecar at ingestion. This hash is the universal photo ID — it is stable (photos are immutable), backend-independent, and enables cross-backend deduplication without coordination.
+
 Open standards and royalty-free formats: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
 
 # Agent Taxonomy
@@ -30,7 +32,7 @@ Albums are virtual collections implemented as XMP tags and saved filters — no 
 - **Smart albums**: Saved predicates over existing metadata (e.g., "Vacation 2024" = `date in 2024 AND tag contains "travel"`). Pure read queries, zero additional storage.
 - **Manual albums**: Adding a photo to an album writes an `album:<name>` tag to its XMP sidecar. The album is then a filter: `tag contains "album:<name>"`. A photo can belong to multiple albums without copying.
 
-Album definitions are stored in `/.ouestcharly/albums.json` alongside the root manifest.
+Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharly/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
 
 # Ingestion Paths
 Interactive: Frontend app (e.g., mobile backup)

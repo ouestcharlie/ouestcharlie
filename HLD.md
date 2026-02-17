@@ -140,12 +140,12 @@ Adding a photo to a manual album writes an `album/<name>` tag to the photo's XMP
 
 ### Album Definitions Storage
 
-Album definitions live in `/.ouestcharly/albums.json` at the backend root, alongside the root manifest:
+Album definitions are **device-local**, not stored in the backend. They live alongside the device configuration:
 
 ```
-/.ouestcharly/
-├── root-manifest.json
-└── albums.json
+~/.ouestcharly/
+├── config.json            ← backend connection info
+└── albums.json            ← album definitions (saved filters)
 ```
 
 ```json
@@ -158,6 +158,15 @@ Album definitions live in `/.ouestcharly/albums.json` at the backend root, along
   ]
 }
 ```
+
+**Why device-local, not in-backend:**
+
+- Album definitions are queries, not data — they belong with the compute layer, not the storage layer.
+- An album can span multiple backends (e.g., "Vacation 2024" may match photos on both local and S3). Storing the definition in one backend would be arbitrary.
+- No cross-backend consistency problem — each device has its own `albums.json`, no concurrent writes from multiple backends.
+- Manual album **tags** (`album/*`) still live in XMP sidecars within each backend — they are per-photo metadata and travel with the photos.
+
+**Multi-device sync** of album definitions is an optional, separable concern. Devices can sync `albums.json` via a shared backend, a git repo, or a syncing service. This is a user choice, not an architectural requirement.
 
 ### Integration with Pruning Pipeline
 
@@ -179,6 +188,54 @@ Following Iceberg's approach, metadata updates use **optimistic concurrency** wi
 4. If the manifest was modified by another agent in the meantime, the commit fails and the agent retries with the latest version
 
 This avoids the need for distributed locks while preventing lost updates. Conflict resolution is straightforward since manifest files are derived from the underlying XMP files — any agent can recompute a manifest from scratch if needed.
+
+## Content-Based Identity and Cross-Backend Deduplication
+
+Each photo is identified by a **SHA-256 hash** of its original file content, computed at ingestion and stored in the XMP sidecar. This hash serves as the universal photo ID across all backends.
+
+### Hash Computation and Storage
+
+At ingestion, the agent computes `SHA-256(original_file_bytes)` and writes it to the XMP sidecar:
+
+```xml
+<ouestcharly:contentHash>sha256:a1b2c3d4e5f6...</ouestcharly:contentHash>
+```
+
+Since photos are immutable, the hash is stable — it never changes after ingestion, regardless of where the photo is stored.
+
+### Deduplication Levels
+
+Deduplication operates at three levels:
+
+**1. Within-backend at ingestion**: When a photo is ingested into a backend, the ingestion agent checks if the content hash already exists in the backend's manifests. If a match is found, the duplicate is rejected or flagged. This prevents the same photo from being stored twice in the same backend.
+
+**2. Within-backend housekeeping**: A housekeeping agent periodically scans the manifest tree for duplicate hashes within a single backend. This catches duplicates that slipped through ingestion (e.g., photos imported from two different source folders at different times). The agent can report, quarantine, or remove duplicates based on policy.
+
+**3. Cross-backend at consumption time**: When a consumption agent queries across multiple backends, it merges results and deduplicates by content hash. If the same photo exists on both local storage and S3, the consumer sees it once and can prefer the lowest-latency source.
+
+### Manifest Hash Consolidation
+
+To enable efficient duplicate detection without scanning every XMP file, content hashes are consolidated into manifests:
+
+- **Folder manifest**: includes the set of content hashes for all photos in the folder, plus a **bloom filter** over hashes for fast probabilistic membership tests.
+- **Parent manifests**: consolidate child hash bloom filters, enabling top-down pruning. A housekeeping agent looking for duplicates can skip entire subtrees whose bloom filters show no overlap.
+
+This follows the same three-level pruning pattern (manifest → bloom filter → XMP scan) used for all other queries.
+
+### Example: Mobile Backup Scenario
+
+1. User takes a photo on their phone → stored locally with hash `sha256:abc123` written to XMP sidecar
+2. Mobile backup agent syncs the photo to S3 → the photo file and its XMP sidecar (containing the same hash) are uploaded
+3. The S3 backend now has a photo with hash `sha256:abc123`, and the local backend has the same
+4. When a consumption agent queries both backends, it sees two results with the same content hash and deduplicates — showing the photo once, preferring the local copy for display (lower latency)
+5. If the user deletes the local copy, the consumption agent seamlessly falls back to the S3 copy — same hash, same photo, different backend
+
+### Design Consequences
+
+- **No coordination required**: Each backend independently stores hashes in XMP sidecars. Deduplication is computed at read time, not write time.
+- **Hash collisions**: SHA-256 has a negligible collision probability (2⁻¹²⁸ for birthday attack). No collision handling is needed in practice.
+- **Backend migration**: Moving photos between backends preserves identity — the content hash doesn't change, so cross-references, album tags, and enrichment metadata remain valid.
+- **Partial replication**: Users can choose to replicate only some folders to a cloud backend. The hash-based identity ensures that duplicated photos are recognized regardless of their storage path.
 
 ## Agent Orchestration
 
