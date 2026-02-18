@@ -28,7 +28,7 @@ Key design decisions:
 
 ## EXIF and the Metadata Pipeline
 
-Photo files are **immutable** — they are never modified after ingestion. EXIF data embedded in images (date, GPS, camera, orientation, etc.) is treated as **read-only input** to the metadata pipeline:
+EXIF data embedded in images (date, GPS, camera, orientation, etc.) is treated as **read-only input** to the metadata pipeline (see HLR: immutable photos principle):
 
 1. **Extraction**: At ingestion, a housekeeping agent reads EXIF from the image file and writes it into an XMP sidecar. This is the only time the image file is read for metadata.
 2. **Enrichment**: Agents add new metadata (faces, descriptions, scene tags) to the XMP sidecar. The image file is read for pixel analysis but never written to.
@@ -46,11 +46,7 @@ This has key consequences:
 
 ### Physical structure strategy
 
-OuEstCharly supports two operating modes for folder organization:
-
-**Index mode** (existing library): The housekeeping agent scans the existing folder tree, builds manifests mirroring the physical structure, and extracts XMP sidecars. No files are moved. The user's original organization is preserved and becomes the manifest tree.
-
-**Ingest mode** (new photos): The ingestion agent places photos into a canonical **date-based partitioning** scheme based on the photo's capture date (from EXIF). The physical layout is optimized per backend type.
+As defined in the HLR, OuEstCharly supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). This section details the physical layout for each mode and backend type.
 
 The physical structure is an **internal optimization**, not a user-facing concept. Users browse through consumption agents using smart albums, timeline views, and filters — not by navigating raw folders.
 
@@ -299,7 +295,7 @@ The manifest records the grid layout (tile order mapping to photo files, grid di
 
 ## Albums
 
-Albums are implemented as **XMP tags + saved filters**, reusing the existing metadata and pruning infrastructure. No new data structure or storage mechanism is introduced.
+Albums are implemented as XMP tags + saved filters (see HLR: Albums). This section details the storage mechanism and pruning integration.
 
 ### Smart Albums
 
@@ -309,7 +305,7 @@ A smart album is a saved predicate evaluated at query time:
 { "name": "Vacation 2024", "type": "smart", "filter": "date:2024 AND tag:travel" }
 ```
 
-Smart albums are pure consumption queries — they produce results by traversing the manifest tree with the same pruning pipeline used for any filter (manifest pruning → bloom filter → XMP scan). They require zero additional storage or enrichment.
+Smart albums are pure consumption queries — they produce results by traversing the manifest tree with the same two-level pruning pipeline used for any filter. They require zero additional storage or enrichment.
 
 ### Manual Albums
 
@@ -344,14 +340,9 @@ Album definitions are **device-local**, not stored in the backend. They live alo
 }
 ```
 
-**Why device-local, not in-backend:**
+Album definitions are device-local (see HLR: Albums for rationale). Manual album **tags** (`album/*`) still live in XMP sidecars within each backend — they are per-photo metadata and travel with the photos.
 
-- Album definitions are queries, not data — they belong with the compute layer, not the storage layer.
-- An album can span multiple backends (e.g., "Vacation 2024" may match photos on both local and S3). Storing the definition in one backend would be arbitrary.
-- No cross-backend consistency problem — each device has its own `albums.json`, no concurrent writes from multiple backends.
-- Manual album **tags** (`album/*`) still live in XMP sidecars within each backend — they are per-photo metadata and travel with the photos.
-
-**Multi-device sync** of album definitions is an optional, separable concern. Devices can sync `albums.json` via a shared backend, a git repo, or a syncing service. This is a user choice, not an architectural requirement.
+**Multi-device sync** of album definitions is an optional, separable concern. Devices can sync `albums.json` via a shared backend, a git repo, or a syncing service.
 
 ### Integration with Pruning Pipeline
 
@@ -375,7 +366,7 @@ This avoids the need for distributed locks while preventing lost updates. Confli
 
 ## Content-Based Identity and Cross-Backend Deduplication
 
-Each photo is identified by a **SHA-256 hash** of its original file content, computed at ingestion and stored in the XMP sidecar. This hash serves as the universal photo ID across all backends.
+This section details the deduplication mechanisms enabled by the content-based identity principle (see HLR: content-based identity).
 
 ### Hash Computation and Storage
 
@@ -404,7 +395,7 @@ To enable efficient duplicate detection without scanning every XMP file, content
 - **Folder manifest**: includes the set of content hashes for all photos in the folder, plus a **bloom filter** over hashes for fast probabilistic membership tests.
 - **Parent manifests**: consolidate child hash bloom filters, enabling top-down pruning. A housekeeping agent looking for duplicates can skip entire subtrees whose bloom filters show no overlap.
 
-This follows the same three-level pruning pattern (manifest → bloom filter → XMP scan) used for all other queries.
+This follows the same two-level pruning pattern (parent manifest pruning → leaf manifest scan) used for all other queries.
 
 ### Example: Mobile Backup Scenario
 
