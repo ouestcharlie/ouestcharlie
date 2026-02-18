@@ -15,6 +15,10 @@ Content-based identity: Each photo is identified by a SHA-256 hash of its origin
 
 Open standards and royalty-free formats: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
 
+Two operating modes (index and ingest): The system supports two ways of onboarding photos. **Index mode** scans an existing photo library in place — no files are moved, the user's original folder structure is preserved, and existing XMP sidecars (from Lightroom, darktable, ExifTool, etc.) are read and honored rather than overwritten. **Ingest mode** receives new photos (mobile backup, bulk import) and places them into an optimized date-based folder structure controlled by the system.
+
+Date-based partitioning: In ingest mode, photos are organized by capture date (`YYYY/YYYY-MM/`) as the primary partitioning dimension. Date is chosen because it is the most common query filter, produces naturally balanced partitions, and aligns the physical storage layout with the manifest pruning tree for efficient queries.
+
 # Agent Taxonomy
 Three categories of agents:
 

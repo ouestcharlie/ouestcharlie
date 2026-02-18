@@ -42,17 +42,196 @@ This has key consequences:
 - **Recoverable metadata** — if an XMP sidecar is lost, a housekeeping agent can re-extract EXIF from the image and enrichment agents can re-enrich
 - **Negligible storage overhead** — EXIF duplication in XMP is tiny compared to image size
 
-## Hierarchical Metadata
+## Folder Structure and Partitioning
+
+### Physical structure strategy
+
+OuEstCharly supports two operating modes for folder organization:
+
+**Index mode** (existing library): The housekeeping agent scans the existing folder tree, builds manifests mirroring the physical structure, and extracts XMP sidecars. No files are moved. The user's original organization is preserved and becomes the manifest tree.
+
+**Ingest mode** (new photos): The ingestion agent places photos into a canonical **date-based partitioning** scheme based on the photo's capture date (from EXIF). The physical layout is optimized per backend type.
+
+The physical structure is an **internal optimization**, not a user-facing concept. Users browse through consumption agents using smart albums, timeline views, and filters — not by navigating raw folders.
+
+### Index mode: original structure preserved
+
+When OuEstCharly indexes an existing photo library, it overlays `.ouestcharly/` metadata directories without moving any files. The user's folder hierarchy becomes the manifest tree:
+
+```
+/Photos/                                    ← user's existing root
+├── .ouestcharly/
+│   └── manifest.json                       ← root manifest (consolidates children)
+├── Vacations/
+│   ├── .ouestcharly/
+│   │   └── manifest.json                   ← mid-level manifest (consolidates Italy + Japan)
+│   ├── Italy 2023/
+│   │   ├── .ouestcharly/
+│   │   │   ├── manifest.json               ← leaf manifest (full XMP inline, ~350 photos)
+│   │   │   └── thumbnails.avif
+│   │   ├── DSC_001.jpg
+│   │   ├── DSC_001.xmp                     ← generated at indexing (EXIF extraction)
+│   │   ├── DSC_002.jpg
+│   │   ├── DSC_002.xmp
+│   │   └── ...
+│   └── Japan 2024/
+│       ├── .ouestcharly/
+│       │   ├── manifest.json
+│       │   └── thumbnails.avif
+│       └── ...
+├── Family/
+│   ├── .ouestcharly/
+│   │   └── manifest.json
+│   ├── Birthday 2024/
+│   │   └── ...
+│   └── Christmas 2023/
+│       └── ...
+└── Camera Roll/
+    ├── .ouestcharly/
+    │   ├── manifest.json                   ← leaf manifest (~2,500 photos — may be large)
+    │   └── thumbnails.avif
+    └── ...
+```
+
+Key characteristics:
+- **No file movement**: Photos stay exactly where the user placed them. Only `.ouestcharly/` directories are created.
+- **Uneven partitions**: Folder sizes reflect user behavior, not optimization targets. A `Camera Roll` folder may contain thousands of photos while `Birthday 2024` has 50. The manifest tree adapts to whatever structure exists.
+- **Existing XMP preserved**: If photos already have XMP sidecars (from Lightroom, darktable, etc.), the housekeeping agent reads them rather than re-extracting from EXIF.
+- **Mixed depth**: The manifest tree can have varying depth — a flat folder with 200 photos coexists with a deeply nested `Vacations/Italy 2023/Day 3/` structure. Each leaf folder with photos gets its own manifest regardless of depth.
+
+### Ingest mode: storage-optimized structure
+
+When OuEstCharly ingests new photos (mobile backup, bulk import), it controls placement using date-based partitioning optimized for the target backend.
+
+#### Local filesystem and ADLS Gen2 (true hierarchical namespace)
+
+```
+/photos/                                    ← backend root
+├── .ouestcharly/
+│   └── manifest.json                       ← root manifest
+├── 2024/
+│   ├── .ouestcharly/
+│   │   └── manifest.json                   ← year summary manifest
+│   ├── 2024-01/
+│   │   ├── .ouestcharly/
+│   │   │   ├── manifest.json               ← leaf manifest (~1,000 photos)
+│   │   │   └── thumbnails.avif
+│   │   ├── IMG_001.jpg
+│   │   ├── IMG_001.xmp
+│   │   └── ...
+│   ├── 2024-07/
+│   │   ├── .ouestcharly/
+│   │   │   ├── manifest.json
+│   │   │   └── thumbnails.avif
+│   │   └── ...
+│   └── 2024-12/
+│       └── ...
+└── 2025/
+    └── ...
+```
+
+Three-level hierarchy: `root → year → month`. Directory listing is cheap, and POSIX ACLs (ADLS Gen2) or filesystem permissions (local) can be set per directory.
+
+#### S3 and GCS (flat namespace, prefix-simulated folders)
+
+```
+photos/                                     ← bucket prefix (not a real directory)
+├── .ouestcharly/manifest.json              ← root manifest
+├── 2024/.ouestcharly/manifest.json         ← year summary
+├── 2024/2024-01/.ouestcharly/manifest.json ← leaf manifest
+├── 2024/2024-01/.ouestcharly/thumbnails.avif
+├── 2024/2024-01/IMG_001.jpg
+├── 2024/2024-01/IMG_001.xmp
+├── 2024/2024-07/.ouestcharly/manifest.json
+├── 2024/2024-07/IMG_001.jpg
+└── ...
+```
+
+Key considerations for object storage:
+- **Shallow prefix depth**: `YYYY/YYYY-MM/` is only 2 levels of prefix. Deeper nesting (adding `/DD/`) would create 365× more prefixes with few objects each, increasing LIST call overhead.
+- **Prefix-based load distribution**: S3 automatically partitions by key prefix. Date-based prefixes spread writes across partitions, avoiding throttling.
+- **No directory listing**: There are no directories — `ListObjectsV2` with `Delimiter=/` simulates folder listing. Manifest-based navigation avoids listing entirely; agents read manifests by their well-known path.
+- **IAM path scoping**: S3 IAM policies and GCS IAM Conditions can restrict access by prefix (e.g., `photos/2024/*` for a scoped enrichment agent).
+
+#### OneDrive and Kdrive (API-based hierarchical)
+
+```
+/Photos/                                    ← root folder in cloud drive
+├── .ouestcharly/
+│   └── manifest.json
+├── 2024/
+│   ├── .ouestcharly/
+│   │   └── manifest.json
+│   ├── 2024-01/
+│   │   ├── .ouestcharly/
+│   │   │   ├── manifest.json
+│   │   │   └── thumbnails.avif
+│   │   └── ...
+│   └── ...
+└── ...
+```
+
+Same logical structure as local filesystem. Key difference:
+- **API pagination**: Folder contents are retrieved via paginated API calls. Keeping partitions at ~1,000 photos means each folder listing fits in 1-2 API pages (typical page size: 200-1000 items).
+- **Rate limiting**: OneDrive and Kdrive APIs have request rate limits. Manifest-based navigation minimizes API calls — a consumption agent reads manifest files by path, never lists directories.
+
+### Backend comparison summary
+
+| Backend | Namespace | Recommended depth | Manifest access | Key constraint |
+|---|---|---|---|---|
+| Local filesystem | True hierarchy | 3 levels (root/year/month) | File read | Directory listing is cheap |
+| ADLS Gen2 | True hierarchy (HNS) | 3 levels | REST API | POSIX ACLs per directory |
+| S3 | Flat (prefix-simulated) | 2 prefix levels | GET by key | Avoid deep prefixes; no directory listing |
+| GCS | Flat (prefix-simulated) | 2 prefix levels | GET by key | Similar to S3; IAM Conditions for prefix scoping |
+| OneDrive / Kdrive | API-based hierarchy | 3 levels | REST API | API pagination and rate limits |
+
+### Split policy
+
+Date-based partitioning targets ~1,000 photos per month. When a month exceeds this target:
+
+- **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes a leaf manifest node. Directory creation is cheap on hierarchical backends.
+- **S3 / GCS**: Sub-partition by ingestion batch — `2024/2024-07/batch-001/`. Avoids creating 31 daily prefixes when only a few days have photos. The batch threshold is configurable (default: 1,000 photos per batch).
+
+### Partition sizing
+
+Each leaf folder (partition) targets **~1,000 photos**. This balances manifest size, pruning granularity, and thumbnail container efficiency.
+
+| Photos per partition | Manifest size (full XMP inline) | Thumbnail AVIF size | S3 read latency |
+|---|---|---|---|
+| 200 | ~200-300 KB | ~2-6 MB | ~55 ms |
+| **1,000** | **~1-1.5 MB** | **~10-30 MB** | **~80 ms** |
+| 5,000 | ~5-7.5 MB | ~50-150 MB | ~150 ms |
+
+At 1,000 photos per partition, a **100,000 photo library** has ~100 leaf partitions.
+
+### Hierarchical metadata
 
 Photos are organized in folders (partitions). Each folder contains:
 
 - **Photo files**: the original images (immutable)
 - **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) stored in standard XMP format
-- **Folder manifest**: a consolidated metadata file summarizing all photos in the folder — think of it as a partition-level statistics file (min/max dates, list of people, location bounding box, photo count, etc.)
+- **Folder manifest**: contains the **full XMP metadata inline** for every photo in the partition, plus partition-level summary statistics (min/max dates, bloom filters, photo count, location bounding box)
 
-The folder manifest is the key enabler for efficient querying without a central database. It aggregates individual XMP metadata into a single file per folder, allowing agents to make pruning decisions by reading manifests alone, without scanning every photo.
+The leaf manifest is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one manifest file per partition** instead of scanning individual XMP sidecars. XMP sidecars remain on disk as the source of truth (for rebuilding manifests and for compatibility with external tools like Lightroom, darktable, ExifTool), but consumption agents never read them.
 
-Manifests are structured hierarchically: a parent folder's manifest consolidates its children's manifests, forming a metadata tree that mirrors the storage hierarchy.
+Manifests are structured hierarchically: a parent folder's manifest consolidates its children's manifests into **summary-only entries** (bloom filters, min/max stats, photo counts), forming a metadata tree that mirrors the storage hierarchy.
+
+| Manifest level | Content | Typical size (100K library) |
+|---|---|---|
+| Root | Consolidates year summaries | ~5 KB |
+| Year | Consolidates month summaries (bloom filters, min/max dates, tag unions) | ~10-20 KB |
+| Leaf (month) | Full per-photo metadata inline + partition summary | ~1-1.5 MB |
+
+### When XMP sidecars are read
+
+XMP sidecars are read only by write-path agents, never by consumption:
+
+| Operation | Reads XMP? | Reads manifest? |
+|---|---|---|
+| Consumption query (browse, search, filter) | No | Yes |
+| Enrichment agent (add tags, faces) | Yes (read-modify-write) | Yes (to find unenriched photos) |
+| Housekeeping manifest rebuild | Yes (recompute from sidecars) | No (rebuilding it) |
+| External tool access (Lightroom, ExifTool) | Yes | No (unaware of manifests) |
 
 ## Thumbnail Storage
 
@@ -92,14 +271,20 @@ Each folder stores its thumbnails as a single AVIF file using the **grid layout*
 ### Folder Structure with Thumbnails
 
 ```
-/2024/vacation/
+/2024/
 ├── .ouestcharly/
-│   ├── manifest.json
-│   └── thumbnails.avif      ← grid of all folder thumbnails
-├── IMG_001.jpg
-├── IMG_001.xmp
-├── IMG_002.heic
-├── IMG_002.xmp
+│   └── manifest.json             ← year-level summary (consolidates months)
+├── 2024-07/
+│   ├── .ouestcharly/
+│   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
+│   │   └── thumbnails.avif       ← grid of all partition thumbnails
+│   ├── IMG_001.jpg
+│   ├── IMG_001.xmp
+│   ├── IMG_002.heic
+│   ├── IMG_002.xmp
+│   └── ...
+├── 2024-08/
+│   └── ...
 └── ...
 ```
 
@@ -170,11 +355,10 @@ Album definitions are **device-local**, not stored in the backend. They live alo
 
 ### Integration with Pruning Pipeline
 
-Album queries use the same three-level pruning as any other filter:
+Album queries use the same two-level pruning as any other filter:
 
-1. **Manifest pruning**: The root manifest consolidates all tags including `album/*` tags. A folder whose manifest has no `album/birthday-party` tag is skipped entirely.
-2. **Bloom filters**: Album tags are included in the bloom filter for the `tag` field. High-cardinality album names are handled efficiently.
-3. **XMP scan**: For folders that pass pruning, XMP sidecars are scanned for the exact tag match.
+1. **Parent manifest pruning**: The root and year manifests consolidate all tags including `album/*` tags in their bloom filters. A partition whose parent summary has no `album/birthday-party` in its bloom filter is skipped entirely.
+2. **Leaf manifest scan**: For partitions that pass pruning, the leaf manifest contains full per-photo metadata inline — the album tag match is evaluated directly, no XMP sidecar reads needed.
 
 This means album browsing has the same performance characteristics as any other metadata query — no special-casing needed.
 
@@ -253,15 +437,22 @@ Agent execution is event-driven or scheduled — there is no central orchestrato
 
 ## Efficient Filtering and Pruning
 
-Querying photos across a large collection uses a multi-level pruning strategy inspired by data lakehouse query planning:
+Querying photos across a large collection uses a **two-level pruning strategy** inspired by data lakehouse query planning:
 
-1. **Manifest pruning**: Read top-level manifests first. If a folder's manifest indicates no photos match the filter (e.g., date range outside bounds, person not listed), skip the entire subtree.
+1. **Parent manifest pruning**: Read top-level manifests (root → year) which contain summary statistics and bloom filters for each child partition. If a partition's summary indicates no photos can match the filter (e.g., date range outside bounds, person absent from bloom filter), skip the entire subtree. Bloom filters enable fast probabilistic membership tests for high-cardinality fields — a bloom filter can confirm "this partition definitely does NOT contain photos of Alice" without listing every person.
 
-2. **Bloom filters**: Manifests include bloom filters for high-cardinality fields (e.g., person names, tags). This enables fast probabilistic membership tests — a bloom filter can confirm "this folder definitely does NOT contain photos of Alice" without listing every person.
+2. **Leaf manifest scan**: For partitions that pass pruning, read the leaf manifest which contains **full per-photo metadata inline**. Evaluate the complete predicate against all entries and return matching photos. No per-photo file reads are needed — the manifest is self-contained.
 
-3. **XMP scan**: For folders that pass pruning, read individual XMP sidecars to evaluate the full predicate and return matching photos.
+This two-level approach (parent manifest pruning → leaf manifest scan) minimizes file reads. A consumption agent never reads individual XMP sidecars — it reads at most one manifest per partition that passes pruning.
 
-This three-level approach (manifest → bloom filter → XMP) minimizes the number of file reads required, which is critical for performance on object storage where each read has latency cost.
+### Query cost example
+
+"Show me photos of Alice from July 2024" on a 100,000 photo library (100 leaf partitions × 1,000 photos):
+
+1. Read root manifest (~5 KB) → year summaries → prune years without "Alice" in bloom filter
+2. Read 2024 year manifest (~15 KB) → month summaries → bloom filter confirms "Alice" may exist in Jul and Sep → prune 10 other months
+3. Read Jul 2024 leaf manifest (~1.5 MB) → scan 1,000 inline entries → return 12 matching photos
+4. **Total: 3 file reads (~1.5 MB)** — instead of 100,000 XMP sidecar reads without pruning
 
 ## Security and Access Control
 
