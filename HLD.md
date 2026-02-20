@@ -1,10 +1,49 @@
 # High Level Design
 
-## Root Configuration (lightweight catalog)
+Key design decisions:
+- **Woof as a central coordinator**: Woof is the central actor in OuEstCharly. It is the only component that interacts directly with the user and the only component that orchestrates agents. All other components (housekeeping, enrichment, consumption agents) are headless workers that Woof triggers and supervises
+- **Each backend is independent**: every backend has its own root manifest and its own metadata tree. There is no cross-backend unified namespace — each is a self-contained photo collection.
+- **No shared catalog service**: the config file is local to the device. Two devices accessing the same S3 bucket each have their own config pointing to it. The bucket itself is the source of truth (via its root manifest), not the config.
+- **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharly/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
+- **Agent discovery**: when Woof launches an agent, it provides the agent with the backend connection info and a scoped credential. The agent connects to its assigned backend(s), reads the root manifest to understand the current state, and navigates the hierarchical manifest tree from there.
 
-Unlike Iceberg which requires a catalog service to locate tables, OuEstCharly uses a **local configuration file** as its entry point. This preserves the "no central database" principle while giving agents a way to discover storage backends and root manifests.
+## Woof: User-Facing Application and Controller
 
-The configuration lives on each device that runs agents:
+### Responsibilities
+
+**User interaction**: Woof is the UI layer — it presents the photo library to the user (browse, search, filter, albums) and receives user actions (import photos, create albums, trigger enrichment). All user-facing surfaces (web, mobile, desktop) are Woof interfaces.
+
+**Agent orchestration**: Woof decides which agents run, when, and against which backends. It handles the lifecycle management:
+
+- **Trigger**: Woof starts agents in response to user actions (e.g., user imports photos → Woof triggers ingestion agent, then housekeeping for thumbnails and manifest rebuild) or on a schedule (e.g., nightly enrichment pass).
+- **Scope assignment**: Before launching an agent, Woof assigns it a scope — which backend(s), which folder subtrees, and which operations (read/write on photos, metadata, manifests, thumbnails).
+- **Lifecycle**: Woof monitors agent progress and handles completion, failure, and cancellation.
+
+**Authentication and credential management**: Woof owns the credential vault and is the sole component that handles long-lived secrets:
+
+- **Long-lived credentials**: Master credentials (S3 IAM keys, OAuth refresh tokens, service account keys) are stored in the OS keychain, managed exclusively by Woof. No agent ever sees these.
+- **Scoped short-lived tokens**: When Woof launches an agent, it mints a short-lived, narrowly scoped token derived from the master credential (see Security and Access Control for per-backend mechanisms). The agent receives only this scoped token.
+- **Token lifecycle**: Tokens are scoped to the agent's assigned task and expire automatically. Woof can revoke tokens early if an agent is cancelled.
+
+**Configuration ownership**: Woof owns the device-local configuration directory (`~/.ouestcharly/`), including:
+
+- `config.json` — backend connection info
+- `albums.json` — album definitions (saved filters)
+- Credential vault (OS keychain entries)
+
+### Woof and Agents: Control Plane vs. Data Plane
+
+Woof is the **control plane** — it decides what happens. Agents are the **data plane** — they execute against storage. This separation means:
+
+- Agents remain stateless and idempotent: they receive a scope and a task, execute it, and terminate.
+- Woof holds all state that spans agent executions: configuration, album definitions, credentials, and orchestration history.
+- To be confirmed: Agents never communicate with each other directly. If one agent's output is another's input (e.g., ingestion → housekeeping → enrichment), Woof chains the executions.
+
+### Root Configuration (lightweight catalog)
+
+Iceberg requires a catalog service to locate tables. In OuEstCharly, **Woof fills this role**: it is the central contact point that agents use to discover storage backends, obtain scoped credentials, and locate root manifests. However, unlike a shared catalog service, Woof runs on each device and relies on a **local configuration file** — preserving the "no central database" principle.
+
+The configuration is owned by Woof and lives on each device:
 
 ```
 ~/.ouestcharly/config.json
@@ -18,13 +57,6 @@ The configuration lives on each device that runs agents:
   ]
 }
 ```
-
-Key design decisions:
-
-- **Each backend is independent**: every backend has its own root manifest and its own metadata tree. There is no cross-backend unified namespace — each is a self-contained photo collection.
-- **No shared catalog service**: the config file is local to the device. Two devices accessing the same S3 bucket each have their own config pointing to it. The bucket itself is the source of truth (via its root manifest), not the config.
-- **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharly/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
-- **Agent discovery**: when an agent starts, it reads the config, connects to its assigned backend(s), and reads the root manifest to understand the current state. From there, the hierarchical manifest tree guides all operations.
 
 ## EXIF and the Metadata Pipeline
 
@@ -321,7 +353,7 @@ Adding a photo to a manual album writes an `album/<name>` tag to the photo's XMP
 
 ### Album Definitions Storage
 
-Album definitions are **device-local**, not stored in the backend. They live alongside the device configuration:
+Album definitions are **device-local**, not stored in the backend. They are managed by Woof alongside the rest of the device configuration:
 
 ```
 ~/.ouestcharly/
@@ -414,17 +446,21 @@ This follows the same two-level pruning pattern (parent manifest pruning → lea
 
 ## Agent Orchestration
 
-Agents operate independently against the shared storage layer. They coordinate implicitly through the metadata:
+Woof orchestrates all agent execution. Agents do not self-schedule or communicate with each other — Woof triggers them, assigns their scope, and chains dependent executions.
 
-- **Housekeeping agents** watch for changes (new photos, missing thumbnails, stale manifests) and update metadata accordingly. They can run in two modes:
+### Agent types
+
+- **Housekeeping agents** maintain metadata consistency — generate thumbnails, rebuild manifests, find duplicates. They can run in two modes:
   - *Thorough*: full scan and rebuild of manifests and thumbnails
   - *Lazy*: incremental updates based on detected changes (e.g., new files since last run)
 
-- **Enrichment agents** traverse the photo stock, reading photos that lack specific metadata (faces, descriptions, scene tags) and writing enriched XMP sidecars. After enriching a batch, they trigger a manifest update for affected folders.
+- **Enrichment agents** traverse the photo stock, reading photos that lack specific metadata (faces, descriptions, scene tags) and writing enriched XMP sidecars. After enriching a batch, Woof triggers a housekeeping agent to update manifests for affected folders.
 
-- **Consumption agents** serve user-facing applications. They are read-heavy and rely on manifests for fast filtering before fetching individual photos.
+- **Consumption agents** serve Woof's UI layer. They are read-heavy and rely on manifests for fast filtering before fetching individual photos. Woof invokes them in response to user queries.
 
-Agent execution is event-driven or scheduled — there is no central orchestrator. Each agent is self-contained and idempotent: it can be interrupted and restarted safely.
+### Execution model
+
+Each agent is self-contained and idempotent: it receives a scoped token and a task from Woof, executes it, and terminates. It can be interrupted and restarted safely. Woof chains dependent agents — for example, after ingestion completes, Woof triggers housekeeping (thumbnails + manifest rebuild), then enrichment.
 
 ## Efficient Filtering and Pruning
 
@@ -451,7 +487,7 @@ Security follows the **least privilege** principle from the HLR: each agent rece
 
 ### Agent Scopes
 
-Each agent declares a required scope that defines what it can access:
+Agents register with Woof and declare the scope they require. Woof presents the requested grants to the user for explicit approval before issuing credentials:
 
 | Agent type | Photos | XMP metadata | Manifests | Thumbnails |
 |---|---|---|---|---|
@@ -466,16 +502,16 @@ Scopes are enforced at the storage access layer, not within agents themselves �
 
 On local devices, security relies on the **OS-level filesystem permissions** and the device's own protection:
 
-- **Filesystem permissions**: The photo library folder is owned by the application user. Agents run under the same user, scoped by the application layer.
+- **Filesystem permissions**: The photo library folder is owned by the application user. Agents run under the same user, scoped by Woof.
 - **Encryption at rest**: Delegated to the OS (FileVault on macOS, file-based encryption on Android/iOS). No application-level encryption — it would add complexity without benefit since the threat model is device theft, which OS encryption already covers.
-- **Agent isolation**: On mobile, agents run within the app sandbox. On desktop, agents are threads/processes of the same application, and scope enforcement is in-process.
+- **Agent isolation**: On mobile, agents run within the app sandbox. On desktop, agents are threads/processes managed by Woof, and scope enforcement is in-process.
 
 ### Cloud Storage (S3, ADLS Gen2, GCS, OneDrive, Kdrive)
 
 On cloud providers, security relies on **scoped credentials** issued per agent:
 
-- **Credential vaulting**: A single master credential (e.g., S3 IAM user, OAuth refresh token) is stored securely on the user's device (OS keychain). It is never shared with agents directly.
-- **Scoped tokens**: Before an agent runs, the application mints a short-lived, scoped credential:
+- **Credential vaulting**: Master credentials (e.g., S3 IAM user, OAuth refresh token) are stored in the OS keychain, managed exclusively by Woof. They are never shared with agents directly.
+- **Scoped tokens**: Before launching an agent, Woof mints a short-lived, scoped credential matching the user-approved grants:
   - *S3*: STS `AssumeRole` with an inline policy restricting to the required paths and actions (e.g., `s3:GetObject` on `photos/*` for a consumption agent)
   - *ADLS Gen2*: Azure AD service principal with RBAC role assignment scoped to the storage account/container, combined with POSIX ACLs on the hierarchical namespace for path-level control
   - *GCS*: IAM Conditions with `resource.name` prefix matching, or short-lived OAuth2 tokens via Workload Identity Federation scoped to specific buckets and prefixes

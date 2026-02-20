@@ -7,7 +7,9 @@ Storage-agnostic: Supports local drive on laptop or mobile, and commodity object
 
 No central database: Metadata lives alongside data in a hierarchical folder structure, similar to how Iceberg/Delta store manifest files within the data lake itself. This is a strong decoupling choice — the system is self-describing.
 
-Stateless compute (agent model): Compute is decoupled from storage. Agents are independent workers that read/write to the shared storage layer. This enables horizontal scaling and flexibility.
+Woof as central controller: Woof is the user-facing application and the central contact point for agents — analogous to an Iceberg catalog. It owns the device-local configuration, manages credentials, and orchestrates agent execution. All user interaction flows through Woof.
+
+Stateless compute (agent model): Compute is decoupled from storage. Agents are independent workers that register with Woof, declare the scope they require, and receive user-approved scoped credentials. They read/write to the shared storage layer but never hold long-lived secrets or communicate with each other directly. This enables horizontal scaling and flexibility.
 
 Immutable photos: Photo files are never modified after ingestion. Embedded EXIF data is treated as read-only input — it is extracted into sidecar metadata but never written back to the image. This eliminates corruption risk and makes photos safe to replicate or deduplicate.
 
@@ -20,14 +22,14 @@ Two operating modes (index and ingest): The system supports two ways of onboardi
 Date-based partitioning: In ingest mode, photos are organized by capture date (`YYYY/YYYY-MM/`) as the primary partitioning dimension. Date is chosen because it is the most common query filter, produces naturally balanced partitions, and aligns the physical storage layout with the manifest pruning tree for efficient queries.
 
 # Agent Taxonomy
-Three categories of agents:
+Three categories of agents, all orchestrated by Woof:
 
 | Type | Purpose | Trigger |
 |---|---|---|
-| Housekeeping | Maintain metadata consistency, generate thumbnails, find duplicates | Batch/lazy |
-| Data enrichment | Add semantic metadata (face recognition, scene classification, descriptions) | Batch/traversal |
-| Data consumption | Query & browse photos by filters (person, date, location, etc.) | User-facing (web/mobile) |
-| Data consumption | Memories: surface highlights like "on this day", notable trips, people milestones | User-facing (notifications, feed) |
+| Housekeeping | Maintain metadata consistency, generate thumbnails, find duplicates | After ingestion, on schedule, or on-demand |
+| Data enrichment | Add semantic metadata (face recognition, scene classification, descriptions) | After housekeeping, on schedule, or on-demand |
+| Data consumption | Query & browse photos by filters (person, date, location, etc.) | User browses/searches in UI |
+| Data consumption | Memories: surface highlights like "on this day", notable trips, people milestones | User views feed in UI, or on schedule |
 
 # Albums
 
@@ -39,9 +41,9 @@ Albums are virtual collections implemented as XMP tags and saved filters — no 
 Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharly/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
 
 # Ingestion Paths
-Interactive: Frontend app (e.g., mobile backup)
-Batch: Bulk import
+Interactive: User imports via UI (e.g., mobile backup)
+Batch: bulk import
 
 # Least privilege
 
-Agents only receive the required scope to act: read or write on metadata and pictures.
+Agents register with Woof and declare the scope they require. At deployment time, the user explicitly approves the requested grants. Once approved, Woof can trigger agent runs autonomously — issuing scoped, short-lived credentials within the approved grants without further user confirmation.
