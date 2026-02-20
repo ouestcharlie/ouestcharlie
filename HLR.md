@@ -1,6 +1,6 @@
 # High Level Requirements
 
-OuEstCharly is a decentralized photo management system designed around cheap cloud storage. The architecture is inspired by data lakehouse table formats (Iceberg, Delta).
+OuEstCharlie is a decentralized photo management system designed around cheap cloud storage. The architecture is inspired by data lakehouse table formats (Iceberg, Delta).
 
 ## Key Architectural Principles
 Storage-agnostic: Supports local drive on laptop or mobile, and commodity object storage (S3, Azure ADLS Gen2, GCS, OneDrive, Infomaniak Kdrive) — no vendor lock-in.
@@ -38,7 +38,7 @@ Albums are virtual collections implemented as XMP tags and saved filters — no 
 - **Smart albums**: Saved predicates over existing metadata (e.g., "Vacation 2024" = `date in 2024 AND tag contains "travel"`). Pure read queries, zero additional storage.
 - **Manual albums**: Adding a photo to an album writes an `album:<name>` tag to its XMP sidecar. The album is then a filter: `tag contains "album:<name>"`. A photo can belong to multiple albums without copying.
 
-Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharly/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
+Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharlie/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
 
 # Ingestion Paths
 Interactive: User imports via UI (e.g., mobile backup)

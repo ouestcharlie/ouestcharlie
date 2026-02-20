@@ -54,11 +54,11 @@ No existing solution combines:
 
 The closest analogy is how Apache Iceberg disrupted data warehousing by making metadata self-describing and storage-agnostic — but no one has applied this pattern to personal photo management.
 
-## OuEstCharly's Differentiation
+## OuEstCharlie's Differentiation
 
 ### vs. Centralized Cloud (Google, Apple, Amazon)
 
-| Dimension | Centralized cloud | OuEstCharly |
+| Dimension | Centralized cloud | OuEstCharlie |
 |---|---|---|
 | Data ownership | Provider controls data | User owns everything — photos + metadata on their storage |
 | Vendor lock-in | High (proprietary formats, export friction) | None (XMP, JSON, AVIF — standard formats, any backend) |
@@ -68,7 +68,7 @@ The closest analogy is how Apache Iceberg disrupted data warehousing by making m
 
 ### vs. Self-Hosted (Immich, PhotoPrism, Piwigo)
 
-| Dimension | Self-hosted (DB-based) | OuEstCharly |
+| Dimension | Self-hosted (DB-based) | OuEstCharlie |
 |---|---|---|
 | Infrastructure | Server + Database + App | Storage only (agents are stateless) |
 | Metadata resilience | DB is single point of failure | Metadata is self-describing, alongside photos, rebuildable |
@@ -89,13 +89,13 @@ The closest analogy is how Apache Iceberg disrupted data warehousing by making m
 
 5. **Extensible enrichment**: Anyone can write an enrichment agent (face recognition, scene classification, description generation) without understanding the full system — just read photos, write XMP.
 
-6. **Open formats, no lock-in**: XMP is an ISO standard. JSON is universal. AVIF is royalty-free. A user can abandon OuEstCharly and still read all their metadata with any XMP-compatible tool (Lightroom, darktable, ExifTool).
+6. **Open formats, no lock-in**: XMP is an ISO standard. JSON is universal. AVIF is royalty-free. A user can abandon OuEstCharlie and still read all their metadata with any XMP-compatible tool (Lightroom, darktable, ExifTool).
 
 ## UX Gap Analysis vs. Google Photos and Apple Photos
 
-Google Photos and Apple Photos set the consumer expectation for photo management UX. The table below maps their key features against OuEstCharly's current design, identifying what is covered, what is achievable within the architecture, and what is out of scope.
+Google Photos and Apple Photos set the consumer expectation for photo management UX. The table below maps their key features against OuEstCharlie's current design, identifying what is covered, what is achievable within the architecture, and what is out of scope.
 
-| # | Feature | Google Photos | Apple Photos | OuEstCharly status |
+| # | Feature | Google Photos | Apple Photos | OuEstCharlie status |
 |---|---|---|---|---|
 | 1 | **Auto-backup from mobile** | Yes (background sync) | Yes (iCloud Photo Library) | **Planned** — ingestion agent on mobile, backup to any backend |
 | 2 | **Face recognition & grouping** | Yes (built-in ML) | Yes (on-device ML) | **Achievable** — enrichment agent writes face tags to XMP sidecars |
@@ -104,7 +104,7 @@ Google Photos and Apple Photos set the consumer expectation for photo management
 | 5 | **Manual albums** | Yes | Yes | **Designed** — `album/*` XMP tags + saved filter definitions |
 | 6 | **Memories / "On this day"** | Yes (auto-generated stories) | Yes (Memories with music) | **Designed** — consumption agent surfacing highlights from manifests |
 | 7 | **Shared albums** | Yes (link sharing, collaborative) | Yes (Shared Library, shared albums) | **Gap** — requires multi-user access control and shared album definitions |
-| 8 | **Photo editing** | Yes (built-in editor) | Yes (built-in editor) | **Out of scope** — OuEstCharly is a management/organization system, not an editor |
+| 8 | **Photo editing** | Yes (built-in editor) | Yes (built-in editor) | **Out of scope** — OuEstCharlie is a management/organization system, not an editor |
 | 9 | **Video support** | Yes (full video management) | Yes (full video management) | **Gap** — current design focuses on photos; video support (thumbnails, metadata extraction) needs design work |
 | 10 | **Live Photos / motion photos** | Yes | Yes | **Gap** — requires paired file handling (photo + video clip) |
 | 11 | **Map view** | Yes (GPS-based) | Yes (GPS-based) | **Achievable** — GPS coordinates are extracted to XMP; consumption agent renders map view |
@@ -124,11 +124,11 @@ Google Photos and Apple Photos set the consumer expectation for photo management
 
 **Gaps requiring design work (4)**: Shared albums, video support, live photos, trash/recently deleted, offline caching — these need new design decisions but are compatible with the architecture.
 
-**Out of scope (2)**: Photo editing and social sharing integrations — these are outside OuEstCharly's core mission of storage-agnostic photo organization.
+**Out of scope (2)**: Photo editing and social sharing integrations — these are outside OuEstCharlie's core mission of storage-agnostic photo organization.
 
 ### Key Takeaway
 
-OuEstCharly's architecture can deliver ~80% of the consumer-expected feature set through its agent model and XMP metadata layer. The main gaps are collaborative features (shared albums), media type coverage (video, live photos), and client-side UX polish (offline cache, trash). None of these gaps require abandoning the core architecture — they are additive design work.
+OuEstCharlie's architecture can deliver ~80% of the consumer-expected feature set through its agent model and XMP metadata layer. The main gaps are collaborative features (shared albums), media type coverage (video, live photos), and client-side UX polish (offline cache, trash). None of these gaps require abandoning the core architecture — they are additive design work.
 
 ## Target Users
 

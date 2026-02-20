@@ -1,10 +1,10 @@
 # High Level Design
 
 Key design decisions:
-- **Woof as a central coordinator**: Woof is the central actor in OuEstCharly. It is the only component that interacts directly with the user and the only component that orchestrates agents. All other components (housekeeping, enrichment, consumption agents) are headless workers that Woof triggers and supervises
+- **Woof as a central coordinator**: Woof is the central actor in OuEstCharlie. It is the only component that interacts directly with the user and the only component that orchestrates agents. All other components (housekeeping, enrichment, consumption agents) are headless workers that Woof triggers and supervises
 - **Each backend is independent**: every backend has its own root manifest and its own metadata tree. There is no cross-backend unified namespace — each is a self-contained photo collection.
 - **No shared catalog service**: the config file is local to the device. Two devices accessing the same S3 bucket each have their own config pointing to it. The bucket itself is the source of truth (via its root manifest), not the config.
-- **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharly/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
+- **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharlie/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
 - **Agent discovery**: when Woof launches an agent, it provides the agent with the backend connection info and a scoped credential. The agent connects to its assigned backend(s), reads the root manifest to understand the current state, and navigates the hierarchical manifest tree from there.
 
 ## Woof: User-Facing Application and Controller
@@ -25,7 +25,7 @@ Key design decisions:
 - **Scoped short-lived tokens**: When Woof launches an agent, it mints a short-lived, narrowly scoped token derived from the master credential (see Security and Access Control for per-backend mechanisms). The agent receives only this scoped token.
 - **Token lifecycle**: Tokens are scoped to the agent's assigned task and expire automatically. Woof can revoke tokens early if an agent is cancelled.
 
-**Configuration ownership**: Woof owns the device-local configuration directory (`~/.ouestcharly/`), including:
+**Configuration ownership**: Woof owns the device-local configuration directory (`~/.ouestcharlie/`), including:
 
 - `config.json` — backend connection info
 - `albums.json` — album definitions (saved filters)
@@ -41,12 +41,12 @@ Woof is the **control plane** — it decides what happens. Agents are the **data
 
 ### Root Configuration (lightweight catalog)
 
-Iceberg requires a catalog service to locate tables. In OuEstCharly, **Woof fills this role**: it is the central contact point that agents use to discover storage backends, obtain scoped credentials, and locate root manifests. However, unlike a shared catalog service, Woof runs on each device and relies on a **local configuration file** — preserving the "no central database" principle.
+Iceberg requires a catalog service to locate tables. In OuEstCharlie, **Woof fills this role**: it is the central contact point that agents use to discover storage backends, obtain scoped credentials, and locate root manifests. However, unlike a shared catalog service, Woof runs on each device and relies on a **local configuration file** — preserving the "no central database" principle.
 
 The configuration is owned by Woof and lives on each device:
 
 ```
-~/.ouestcharly/config.json
+~/.ouestcharlie/config.json
 {
   "backends": [
     { "name": "local", "type": "filesystem", "root": "/Users/alice/Photos" },
@@ -78,23 +78,23 @@ This has key consequences:
 
 ### Physical structure strategy
 
-As defined in the HLR, OuEstCharly supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). This section details the physical layout for each mode and backend type.
+As defined in the HLR, OuEstCharlie supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). This section details the physical layout for each mode and backend type.
 
 The physical structure is an **internal optimization**, not a user-facing concept. Users browse through consumption agents using smart albums, timeline views, and filters — not by navigating raw folders.
 
 ### Index mode: original structure preserved
 
-When OuEstCharly indexes an existing photo library, it overlays `.ouestcharly/` metadata directories without moving any files. The user's folder hierarchy becomes the manifest tree:
+When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/` metadata directories without moving any files. The user's folder hierarchy becomes the manifest tree:
 
 ```
 /Photos/                                    ← user's existing root
-├── .ouestcharly/
+├── .ouestcharlie/
 │   └── manifest.json                       ← root manifest (consolidates children)
 ├── Vacations/
-│   ├── .ouestcharly/
+│   ├── .ouestcharlie/
 │   │   └── manifest.json                   ← mid-level manifest (consolidates Italy + Japan)
 │   ├── Italy 2023/
-│   │   ├── .ouestcharly/
+│   │   ├── .ouestcharlie/
 │   │   │   ├── manifest.json               ← leaf manifest (full XMP inline, ~350 photos)
 │   │   │   └── thumbnails.avif
 │   │   ├── DSC_001.jpg
@@ -103,52 +103,52 @@ When OuEstCharly indexes an existing photo library, it overlays `.ouestcharly/` 
 │   │   ├── DSC_002.xmp
 │   │   └── ...
 │   └── Japan 2024/
-│       ├── .ouestcharly/
+│       ├── .ouestcharlie/
 │       │   ├── manifest.json
 │       │   └── thumbnails.avif
 │       └── ...
 ├── Family/
-│   ├── .ouestcharly/
+│   ├── .ouestcharlie/
 │   │   └── manifest.json
 │   ├── Birthday 2024/
 │   │   └── ...
 │   └── Christmas 2023/
 │       └── ...
 └── Camera Roll/
-    ├── .ouestcharly/
+    ├── .ouestcharlie/
     │   ├── manifest.json                   ← leaf manifest (~2,500 photos — may be large)
     │   └── thumbnails.avif
     └── ...
 ```
 
 Key characteristics:
-- **No file movement**: Photos stay exactly where the user placed them. Only `.ouestcharly/` directories are created.
+- **No file movement**: Photos stay exactly where the user placed them. Only `.ouestcharlie/` directories are created.
 - **Uneven partitions**: Folder sizes reflect user behavior, not optimization targets. A `Camera Roll` folder may contain thousands of photos while `Birthday 2024` has 50. The manifest tree adapts to whatever structure exists.
 - **Existing XMP preserved**: If photos already have XMP sidecars (from Lightroom, darktable, etc.), the housekeeping agent reads them rather than re-extracting from EXIF.
 - **Mixed depth**: The manifest tree can have varying depth — a flat folder with 200 photos coexists with a deeply nested `Vacations/Italy 2023/Day 3/` structure. Each leaf folder with photos gets its own manifest regardless of depth.
 
 ### Ingest mode: storage-optimized structure
 
-When OuEstCharly ingests new photos (mobile backup, bulk import), it controls placement using date-based partitioning optimized for the target backend.
+When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls placement using date-based partitioning optimized for the target backend.
 
 #### Local filesystem and ADLS Gen2 (true hierarchical namespace)
 
 ```
 /photos/                                    ← backend root
-├── .ouestcharly/
+├── .ouestcharlie/
 │   └── manifest.json                       ← root manifest
 ├── 2024/
-│   ├── .ouestcharly/
+│   ├── .ouestcharlie/
 │   │   └── manifest.json                   ← year summary manifest
 │   ├── 2024-01/
-│   │   ├── .ouestcharly/
+│   │   ├── .ouestcharlie/
 │   │   │   ├── manifest.json               ← leaf manifest (~1,000 photos)
 │   │   │   └── thumbnails.avif
 │   │   ├── IMG_001.jpg
 │   │   ├── IMG_001.xmp
 │   │   └── ...
 │   ├── 2024-07/
-│   │   ├── .ouestcharly/
+│   │   ├── .ouestcharlie/
 │   │   │   ├── manifest.json
 │   │   │   └── thumbnails.avif
 │   │   └── ...
@@ -164,13 +164,13 @@ Three-level hierarchy: `root → year → month`. Directory listing is cheap, an
 
 ```
 photos/                                     ← bucket prefix (not a real directory)
-├── .ouestcharly/manifest.json              ← root manifest
-├── 2024/.ouestcharly/manifest.json         ← year summary
-├── 2024/2024-01/.ouestcharly/manifest.json ← leaf manifest
-├── 2024/2024-01/.ouestcharly/thumbnails.avif
+├── .ouestcharlie/manifest.json              ← root manifest
+├── 2024/.ouestcharlie/manifest.json         ← year summary
+├── 2024/2024-01/.ouestcharlie/manifest.json ← leaf manifest
+├── 2024/2024-01/.ouestcharlie/thumbnails.avif
 ├── 2024/2024-01/IMG_001.jpg
 ├── 2024/2024-01/IMG_001.xmp
-├── 2024/2024-07/.ouestcharly/manifest.json
+├── 2024/2024-07/.ouestcharlie/manifest.json
 ├── 2024/2024-07/IMG_001.jpg
 └── ...
 ```
@@ -185,13 +185,13 @@ Key considerations for object storage:
 
 ```
 /Photos/                                    ← root folder in cloud drive
-├── .ouestcharly/
+├── .ouestcharlie/
 │   └── manifest.json
 ├── 2024/
-│   ├── .ouestcharly/
+│   ├── .ouestcharlie/
 │   │   └── manifest.json
 │   ├── 2024-01/
-│   │   ├── .ouestcharly/
+│   │   ├── .ouestcharlie/
 │   │   │   ├── manifest.json
 │   │   │   └── thumbnails.avif
 │   │   └── ...
@@ -300,10 +300,10 @@ Each folder stores its thumbnails as a single AVIF file using the **grid layout*
 
 ```
 /2024/
-├── .ouestcharly/
+├── .ouestcharlie/
 │   └── manifest.json             ← year-level summary (consolidates months)
 ├── 2024-07/
-│   ├── .ouestcharly/
+│   ├── .ouestcharlie/
 │   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
 │   │   └── thumbnails.avif       ← grid of all partition thumbnails
 │   ├── IMG_001.jpg
@@ -356,7 +356,7 @@ Adding a photo to a manual album writes an `album/<name>` tag to the photo's XMP
 Album definitions are **device-local**, not stored in the backend. They are managed by Woof alongside the rest of the device configuration:
 
 ```
-~/.ouestcharly/
+~/.ouestcharlie/
 ├── config.json            ← backend connection info
 └── albums.json            ← album definitions (saved filters)
 ```
@@ -405,7 +405,7 @@ This section details the deduplication mechanisms enabled by the content-based i
 At ingestion, the agent computes `SHA-256(original_file_bytes)` and writes it to the XMP sidecar:
 
 ```xml
-<ouestcharly:contentHash>sha256:a1b2c3d4e5f6...</ouestcharly:contentHash>
+<ouestcharlie:contentHash>sha256:a1b2c3d4e5f6...</ouestcharlie:contentHash>
 ```
 
 Since photos are immutable, the hash is stable — it never changes after ingestion, regardless of where the photo is stored.
