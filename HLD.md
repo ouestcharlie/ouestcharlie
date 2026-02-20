@@ -243,6 +243,14 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 
 The manifest records the grid layout for each tier (tile order mapping to photo files, grid dimensions, resolution) so consumption agents can request specific tiles by index.
 
+### Access strategy
+
+AVIF containers are downloaded in full and **cached on device**. At ~5-8 MB per partition for grid thumbnails, a full download is a single HTTP request — cheaper and simpler than byte-range addressing into a remote file. Once cached locally, random access to individual tiles is instant (ISOBMFF box parsing against a local file). Preview containers (~80-120 MB) are fetched on demand when the user navigates into a partition, and cached with the same strategy.
+
+For local backends, containers are read directly from disk — no caching layer needed.
+
+Cache invalidation is straightforward: when a housekeeping agent rebuilds a thumbnail container (e.g., after new photos are ingested), it updates the container's content hash in the manifest. Consumption agents compare the manifest hash against their cached copy and re-fetch on mismatch.
+
 ## Albums
 
 Albums are implemented as XMP tags + saved filters (see HLR: Albums).
@@ -301,14 +309,43 @@ Album queries use the same two-level pruning as any other filter:
 
 ## Consistency Model
 
-Following Iceberg's approach, metadata updates use **optimistic concurrency** with **atomic commits**:
+Following Iceberg's approach, metadata updates use **optimistic concurrency** with **atomic commits**. This applies to both XMP sidecars (source of truth) and manifests (derived).
+
+### XMP sidecar concurrency
+
+XMP sidecars carry a version counter that agents use for optimistic concurrency:
+
+```xml
+<ouestcharlie:metadataVersion>3</ouestcharlie:metadataVersion>
+```
+
+1. An agent reads the XMP sidecar and notes its `metadataVersion` (and/or the backend-native version token — see below)
+2. It applies its changes locally (e.g., adds face tags)
+3. It writes the updated sidecar with `metadataVersion` incremented, using a **conditional write** to ensure no other agent modified the file in the meantime
+4. If the condition fails (another agent wrote first), the agent re-reads the latest sidecar, merges its changes, and retries
+
+Conditional write mechanisms per backend:
+
+| Backend | Condition mechanism |
+|---|---|
+| S3 | `PutObject` with `If-None-Match` on ETag (conditional writes, Aug 2024) |
+| GCS | `generation` match on upload |
+| ADLS Gen2 | `If-Match` on ETag |
+| Local filesystem | Write to temp file, rename — atomic on POSIX; version check before rename |
+| OneDrive / Kdrive | Application-level version check before PUT |
+
+Since agents write **non-overlapping fields** (a face-detection agent writes `ouestcharlie:faces`, a scene-classification agent writes `ouestcharlie:scene`), most retries are simple merges rather than true conflicts.
+
+### Manifest concurrency
+
+Manifests use the same optimistic concurrency pattern:
 
 1. An agent reads the current manifest version
 2. It computes the new manifest state locally
 3. It writes the updated manifest atomically (e.g., write-then-rename on object storage)
 4. If the manifest was modified by another agent in the meantime, the commit fails and the agent retries with the latest version
 
-This avoids the need for distributed locks while preventing lost updates. Conflict resolution is straightforward since manifest files are derived from the underlying XMP files — any agent can recompute a manifest from scratch if needed.
+Conflict resolution for manifests is straightforward since they are derived from the underlying XMP files — any agent can recompute a manifest from scratch if needed.
 
 ## Content-Based Identity and Cross-Backend Deduplication
 

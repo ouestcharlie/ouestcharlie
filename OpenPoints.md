@@ -8,10 +8,6 @@ The HLR says "photo management" but modern phone libraries are 30-50% video. The
 
 Photos are "immutable after ingestion" but there's no design for what happens when a user wants to delete a photo. No trash/soft-delete mechanism, no tombstone in manifests, no propagation of deletion across backends. This is a core user operation with no coverage.
 
-## 3. Conflict resolution for XMP sidecars is hand-waved
-
-The consistency model covers manifest conflicts (optimistic concurrency, retry), but XMP sidecars have a harder problem: two enrichment agents writing different tags to the same sidecar concurrently. The HLD says manifests can be recomputed from XMP, but doesn't address XMP-level conflicts. This is the actual hard conflict — manifests are derived, XMP is the source of truth.
-
 ## 4. No offline / partial-connectivity story
 
 The architecture has local + cloud backends, but there's no design for what happens when the cloud is unreachable. Can the user still browse? Are manifests cached locally? What about writes queued for sync? This is critical for mobile use cases (mobile backup is explicitly listed as a use case).
@@ -28,10 +24,6 @@ What happens when a thumbnail container needs to change? A new photo is added to
 
 The HLD shows filter examples like `date:2024 AND tag:travel` and `rating >= 4` but never defines the query language. Bloom filters are mentioned for pruning, but what fields are indexed? What operators are supported? This is central to how consumption agents work.
 
-## 8. AVIF grid random access claim is under-examined
-
-The rationale says AVIF grid tiles are "independently decodable" — this is the key technical bet for thumbnail performance. But the HLD doesn't address: how does a client request tile N from a remote AVIF file? HTTP range requests require knowing byte offsets. Is the offset table stored in the manifest? In the AVIF header? Does this require downloading the full container first, defeating the purpose?
-
 ## 9. No observability or error recovery for agents
 
 Agents are "self-contained and idempotent" and Woof "monitors progress" — but there's no design for: how does Woof know an agent is stuck? What does the agent report? Where are logs? How does a user understand why their library is missing thumbnails for a folder?
@@ -42,4 +34,4 @@ The HLR says XMP enables interop with Lightroom/darktable, and index mode preser
 
 ---
 
-**Most critical gaps**: deletion model (#2), XMP conflict resolution (#3), and thumbnail random access mechanics (#8) — these are areas where the current design would hit real implementation blockers.
+**Most critical gap**: deletion model (#2) — this is a core user operation with no coverage in the current design.
