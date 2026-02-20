@@ -68,19 +68,11 @@ EXIF data embedded in images (date, GPS, camera, orientation, etc.) is treated a
 
 The XMP sidecar is the **single source of truth** for all queryable metadata. Agents and consumers never need to parse EXIF from images — they only read XMP and manifests.
 
-This has key consequences:
-- **No image corruption risk** — original files are never written to
-- **Format independence** — EXIF parsing (JPEG, HEIC, RAW, etc.) happens once at extraction, not on every query
-- **Recoverable metadata** — if an XMP sidecar is lost, a housekeeping agent can re-extract EXIF from the image and enrichment agents can re-enrich
-- **Negligible storage overhead** — EXIF duplication in XMP is tiny compared to image size
+See [HLD_rationale.md § EXIF](HLD_rationale.md#exif-and-the-metadata-pipeline) for why this approach was chosen.
 
 ## Folder Structure and Partitioning
 
-### Physical structure strategy
-
-As defined in the HLR, OuEstCharlie supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). This section details the physical layout for each mode and backend type.
-
-The physical structure is an **internal optimization**, not a user-facing concept. Users browse through consumption agents using smart albums, timeline views, and filters — not by navigating raw folders.
+OuEstCharlie supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). See [HLD_rationale.md § Folder Structure](HLD_rationale.md#folder-structure-and-partitioning) for per-backend considerations and partition sizing analysis.
 
 ### Index mode: original structure preserved
 
@@ -121,12 +113,6 @@ When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/
     └── ...
 ```
 
-Key characteristics:
-- **No file movement**: Photos stay exactly where the user placed them. Only `.ouestcharlie/` directories are created.
-- **Uneven partitions**: Folder sizes reflect user behavior, not optimization targets. A `Camera Roll` folder may contain thousands of photos while `Birthday 2024` has 50. The manifest tree adapts to whatever structure exists.
-- **Existing XMP preserved**: If photos already have XMP sidecars (from Lightroom, darktable, etc.), the housekeeping agent reads them rather than re-extracting from EXIF.
-- **Mixed depth**: The manifest tree can have varying depth — a flat folder with 200 photos coexists with a deeply nested `Vacations/Italy 2023/Day 3/` structure. Each leaf folder with photos gets its own manifest regardless of depth.
-
 ### Ingest mode: storage-optimized structure
 
 When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls placement using date-based partitioning optimized for the target backend.
@@ -158,7 +144,7 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
     └── ...
 ```
 
-Three-level hierarchy: `root → year → month`. Directory listing is cheap, and POSIX ACLs (ADLS Gen2) or filesystem permissions (local) can be set per directory.
+Three-level hierarchy: `root → year → month`.
 
 #### S3 and GCS (flat namespace, prefix-simulated folders)
 
@@ -175,33 +161,9 @@ photos/                                     ← bucket prefix (not a real direct
 └── ...
 ```
 
-Key considerations for object storage:
-- **Shallow prefix depth**: `YYYY/YYYY-MM/` is only 2 levels of prefix. Deeper nesting (adding `/DD/`) would create 365× more prefixes with few objects each, increasing LIST call overhead.
-- **Prefix-based load distribution**: S3 automatically partitions by key prefix. Date-based prefixes spread writes across partitions, avoiding throttling.
-- **No directory listing**: There are no directories — `ListObjectsV2` with `Delimiter=/` simulates folder listing. Manifest-based navigation avoids listing entirely; agents read manifests by their well-known path.
-- **IAM path scoping**: S3 IAM policies and GCS IAM Conditions can restrict access by prefix (e.g., `photos/2024/*` for a scoped enrichment agent).
-
 #### OneDrive and Kdrive (API-based hierarchical)
 
-```
-/Photos/                                    ← root folder in cloud drive
-├── .ouestcharlie/
-│   └── manifest.json
-├── 2024/
-│   ├── .ouestcharlie/
-│   │   └── manifest.json
-│   ├── 2024-01/
-│   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json
-│   │   │   └── thumbnails.avif
-│   │   └── ...
-│   └── ...
-└── ...
-```
-
-Same logical structure as local filesystem. Key difference:
-- **API pagination**: Folder contents are retrieved via paginated API calls. Keeping partitions at ~1,000 photos means each folder listing fits in 1-2 API pages (typical page size: 200-1000 items).
-- **Rate limiting**: OneDrive and Kdrive APIs have request rate limits. Manifest-based navigation minimizes API calls — a consumption agent reads manifest files by path, never lists directories.
+Same logical structure as local filesystem.
 
 ### Backend comparison summary
 
@@ -217,20 +179,8 @@ Same logical structure as local filesystem. Key difference:
 
 Date-based partitioning targets ~1,000 photos per month. When a month exceeds this target:
 
-- **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes a leaf manifest node. Directory creation is cheap on hierarchical backends.
-- **S3 / GCS**: Sub-partition by ingestion batch — `2024/2024-07/batch-001/`. Avoids creating 31 daily prefixes when only a few days have photos. The batch threshold is configurable (default: 1,000 photos per batch).
-
-### Partition sizing
-
-Each leaf folder (partition) targets **~1,000 photos**. This balances manifest size, pruning granularity, and thumbnail container efficiency.
-
-| Photos per partition | Manifest size (full XMP inline) | Thumbnail AVIF size | S3 read latency |
-|---|---|---|---|
-| 200 | ~200-300 KB | ~2-6 MB | ~55 ms |
-| **1,000** | **~1-1.5 MB** | **~10-30 MB** | **~80 ms** |
-| 5,000 | ~5-7.5 MB | ~50-150 MB | ~150 ms |
-
-At 1,000 photos per partition, a **100,000 photo library** has ~100 leaf partitions.
+- **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes a leaf manifest node.
+- **S3 / GCS**: Sub-partition by ingestion batch — `2024/2024-07/batch-001/`. The batch threshold is configurable (default: 1,000 photos per batch).
 
 ### Hierarchical metadata
 
@@ -240,7 +190,7 @@ Photos are organized in folders (partitions). Each folder contains:
 - **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) stored in standard XMP format
 - **Folder manifest**: contains the **full XMP metadata inline** for every photo in the partition, plus partition-level summary statistics (min/max dates, bloom filters, photo count, location bounding box)
 
-The leaf manifest is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one manifest file per partition** instead of scanning individual XMP sidecars. XMP sidecars remain on disk as the source of truth (for rebuilding manifests and for compatibility with external tools like Lightroom, darktable, ExifTool), but consumption agents never read them.
+The leaf manifest is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one manifest file per partition** instead of scanning individual XMP sidecars.
 
 Manifests are structured hierarchically: a parent folder's manifest consolidates its children's manifests into **summary-only entries** (bloom filters, min/max stats, photo counts), forming a metadata tree that mirrors the storage hierarchy.
 
@@ -263,40 +213,9 @@ XMP sidecars are read only by write-path agents, never by consumption:
 
 ## Thumbnail Storage
 
-### Problem
+Each folder stores its thumbnails as a single **AVIF grid** file (M x N tiles). Each tile is an independent AV1 stream that can be decoded without reading the full container.
 
-Each folder can contain many photos. Storing one thumbnail file per photo creates a proliferation of small files, which is costly on object storage (per-request latency and pricing) and clutters the folder structure.
-
-### Format Analysis
-
-| Format | Multi-image container | Random access to individual thumbnails | Compression | Platform support |
-|---|---|---|---|---|
-| Individual JPEG/WebP | N/A (one file per photo) | N/A | Good | Universal |
-| Sprite sheet (single WebP/JPEG) | Grid layout, one file | By pixel offset (requires decoding full image) | Good | Universal |
-| Multi-page TIFF | Yes | Yes, by IFD offset | Moderate (LZW) | Universal |
-| HEIF/HEIC | Yes (ISOBMFF container) | Yes, by item index | Excellent (HEVC) | iOS/macOS native, limited elsewhere |
-| **AVIF grid** | **Yes (ISOBMFF container)** | **Yes, each tile independently decodable** | **Excellent (AV1)** | **All major platforms** |
-
-### Decision: AVIF Grid Containers
-
-Each folder stores its thumbnails as a single AVIF file using the **grid layout** (M x N tiles). Each tile is an independent AV1 stream that can be decoded without reading the full container.
-
-**Advantages over alternatives:**
-- **vs. individual files**: Reduces file count from N to 1 per folder. Critical for object storage cost and latency.
-- **vs. sprite sheets**: Individual tiles can be decoded independently — no need to decode the entire image to extract one thumbnail. Better for progressive loading.
-- **vs. HEIF/HEIC**: AVIF is open and royalty-free (AV1-based), with broader cross-platform support. HEVC licensing is complex.
-- **vs. multi-page TIFF**: Better compression, smaller files.
-
-**Platform support (native, no additional dependencies):**
-- Android 12+ (Oct 2021)
-- iOS 16+ / macOS Ventura+ (Sep 2022)
-- Windows 11 22H2+
-- All major browsers: Chrome 85+, Firefox 93+, Safari 16+, Edge 90+
-- Linux: via [libavif](https://github.com/AOMediaCodec/libavif) and `avif-pixbuf-loader`
-
-**Reference implementation**: [libavif](https://github.com/AOMediaCodec/libavif) by the Alliance for Open Media — C library, cross-platform, supports grid encoding/decoding with per-tile random access.
-
-### Folder Structure with Thumbnails
+See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) for the format analysis, alternatives comparison, and platform support details.
 
 ```
 /2024/
@@ -318,16 +237,9 @@ Each folder stores its thumbnails as a single AVIF file using the **grid layout*
 
 The manifest records the grid layout (tile order mapping to photo files, grid dimensions, thumbnail resolution) so consumption agents can request specific tiles by index.
 
-**References:**
-- [AVIF specification - Alliance for Open Media](https://aomedia.org/specifications/avif/)
-- [libavif - GitHub](https://github.com/AOMediaCodec/libavif)
-- [AVIF browser support - Can I Use](https://caniuse.com/avif)
-- [AVIF - Wikipedia](https://en.wikipedia.org/wiki/AVIF)
-- [libavif-container](https://github.com/link-u/libavif-container) — AVIF container manipulation library
-
 ## Albums
 
-Albums are implemented as XMP tags + saved filters (see HLR: Albums). This section details the storage mechanism and pruning integration.
+Albums are implemented as XMP tags + saved filters (see HLR: Albums).
 
 ### Smart Albums
 
@@ -372,9 +284,7 @@ Album definitions are **device-local**, not stored in the backend. They are mana
 }
 ```
 
-Album definitions are device-local (see HLR: Albums for rationale). Manual album **tags** (`album/*`) still live in XMP sidecars within each backend — they are per-photo metadata and travel with the photos.
-
-**Multi-device sync** of album definitions is an optional, separable concern. Devices can sync `albums.json` via a shared backend, a git repo, or a syncing service.
+See [HLD_rationale.md § Albums](HLD_rationale.md#albums) for why definitions are device-local and multi-device sync options.
 
 ### Integration with Pruning Pipeline
 
@@ -382,8 +292,6 @@ Album queries use the same two-level pruning as any other filter:
 
 1. **Parent manifest pruning**: The root and year manifests consolidate all tags including `album/*` tags in their bloom filters. A partition whose parent summary has no `album/birthday-party` in its bloom filter is skipped entirely.
 2. **Leaf manifest scan**: For partitions that pass pruning, the leaf manifest contains full per-photo metadata inline — the album tag match is evaluated directly, no XMP sidecar reads needed.
-
-This means album browsing has the same performance characteristics as any other metadata query — no special-casing needed.
 
 ## Consistency Model
 
@@ -414,9 +322,9 @@ Since photos are immutable, the hash is stable — it never changes after ingest
 
 Deduplication operates at three levels:
 
-**1. Within-backend at ingestion**: When a photo is ingested into a backend, the ingestion agent checks if the content hash already exists in the backend's manifests. If a match is found, the duplicate is rejected or flagged. This prevents the same photo from being stored twice in the same backend.
+**1. Within-backend at ingestion**: When a photo is ingested into a backend, the ingestion agent checks if the content hash already exists in the backend's manifests. If a match is found, the duplicate is rejected or flagged.
 
-**2. Within-backend housekeeping**: A housekeeping agent periodically scans the manifest tree for duplicate hashes within a single backend. This catches duplicates that slipped through ingestion (e.g., photos imported from two different source folders at different times). The agent can report, quarantine, or remove duplicates based on policy.
+**2. Within-backend housekeeping**: A housekeeping agent periodically scans the manifest tree for duplicate hashes within a single backend. This catches duplicates that slipped through ingestion (e.g., photos imported from two different source folders at different times).
 
 **3. Cross-backend at consumption time**: When a consumption agent queries across multiple backends, it merges results and deduplicates by content hash. If the same photo exists on both local storage and S3, the consumer sees it once and can prefer the lowest-latency source.
 
@@ -425,24 +333,9 @@ Deduplication operates at three levels:
 To enable efficient duplicate detection without scanning every XMP file, content hashes are consolidated into manifests:
 
 - **Folder manifest**: includes the set of content hashes for all photos in the folder, plus a **bloom filter** over hashes for fast probabilistic membership tests.
-- **Parent manifests**: consolidate child hash bloom filters, enabling top-down pruning. A housekeeping agent looking for duplicates can skip entire subtrees whose bloom filters show no overlap.
+- **Parent manifests**: consolidate child hash bloom filters, enabling top-down pruning.
 
-This follows the same two-level pruning pattern (parent manifest pruning → leaf manifest scan) used for all other queries.
-
-### Example: Mobile Backup Scenario
-
-1. User takes a photo on their phone → stored locally with hash `sha256:abc123` written to XMP sidecar
-2. Mobile backup agent syncs the photo to S3 → the photo file and its XMP sidecar (containing the same hash) are uploaded
-3. The S3 backend now has a photo with hash `sha256:abc123`, and the local backend has the same
-4. When a consumption agent queries both backends, it sees two results with the same content hash and deduplicates — showing the photo once, preferring the local copy for display (lower latency)
-5. If the user deletes the local copy, the consumption agent seamlessly falls back to the S3 copy — same hash, same photo, different backend
-
-### Design Consequences
-
-- **No coordination required**: Each backend independently stores hashes in XMP sidecars. Deduplication is computed at read time, not write time.
-- **Hash collisions**: SHA-256 has a negligible collision probability (2⁻¹²⁸ for birthday attack). No collision handling is needed in practice.
-- **Backend migration**: Moving photos between backends preserves identity — the content hash doesn't change, so cross-references, album tags, and enrichment metadata remain valid.
-- **Partial replication**: Users can choose to replicate only some folders to a cloud backend. The hash-based identity ensures that duplicated photos are recognized regardless of their storage path.
+See [HLD_rationale.md § Content-Based Identity](HLD_rationale.md#content-based-identity-and-deduplication) for an illustrative mobile backup scenario and design consequences.
 
 ## Agent Orchestration
 
@@ -466,7 +359,7 @@ Each agent is self-contained and idempotent: it receives a scoped token and a ta
 
 Querying photos across a large collection uses a **two-level pruning strategy** inspired by data lakehouse query planning:
 
-1. **Parent manifest pruning**: Read top-level manifests (root → year) which contain summary statistics and bloom filters for each child partition. If a partition's summary indicates no photos can match the filter (e.g., date range outside bounds, person absent from bloom filter), skip the entire subtree. Bloom filters enable fast probabilistic membership tests for high-cardinality fields — a bloom filter can confirm "this partition definitely does NOT contain photos of Alice" without listing every person.
+1. **Parent manifest pruning**: Read top-level manifests (root → year) which contain summary statistics and bloom filters for each child partition. If a partition's summary indicates no photos can match the filter (e.g., date range outside bounds, person absent from bloom filter), skip the entire subtree.
 
 2. **Leaf manifest scan**: For partitions that pass pruning, read the leaf manifest which contains **full per-photo metadata inline**. Evaluate the complete predicate against all entries and return matching photos. No per-photo file reads are needed — the manifest is self-contained.
 
@@ -503,7 +396,7 @@ Scopes are enforced at the storage access layer, not within agents themselves �
 On local devices, security relies on the **OS-level filesystem permissions** and the device's own protection:
 
 - **Filesystem permissions**: The photo library folder is owned by the application user. Agents run under the same user, scoped by Woof.
-- **Encryption at rest**: Delegated to the OS (FileVault on macOS, file-based encryption on Android/iOS). No application-level encryption — it would add complexity without benefit since the threat model is device theft, which OS encryption already covers.
+- **Encryption at rest**: Delegated to the OS (FileVault on macOS, file-based encryption on Android/iOS).
 - **Agent isolation**: On mobile, agents run within the app sandbox. On desktop, agents are threads/processes managed by Woof, and scope enforcement is in-process.
 
 ### Cloud Storage (S3, ADLS Gen2, GCS, OneDrive, Kdrive)
@@ -517,38 +410,9 @@ On cloud providers, security relies on **scoped credentials** issued per agent:
   - *GCS*: IAM Conditions with `resource.name` prefix matching, or short-lived OAuth2 tokens via Workload Identity Federation scoped to specific buckets and prefixes
   - *OneDrive/Kdrive*: OAuth token with limited scope, or a shared link with read-only access for consumption agents
 - **Token lifetime**: Scoped tokens are short-lived (minutes to hours). If an agent is interrupted, its token expires naturally.
-- **Path-based scoping**: Agents can be restricted to specific folder subtrees, not just action types. For example, an enrichment agent processing `/2024/` photos gets no access to `/2025/`.
+- **Path-based scoping**: Agents can be restricted to specific folder subtrees, not just action types.
 
-### Immutability and Write-Scoping Enforcement
-
-Photo immutability and metadata write-scoping can be enforced at the backend level, with varying strength depending on the provider:
-
-**S3** — strong enforcement via IAM policies:
-- Photo immutability: deny `s3:PutObject` / `s3:DeleteObject` on photo paths for all agents except ingestion
-- Metadata write-scoping: allow `s3:PutObject` on `*.xmp` and manifest paths only for housekeeping/enrichment roles
-- Consumption agents receive `s3:GetObject` only — they physically cannot modify anything
-
-**Local filesystem** — moderate enforcement via file permissions:
-- After ingestion, photo files are set read-only (`chmod 444`)
-- XMP sidecars and manifests remain writable by the application user
-- Effective against accidental writes; not a hard boundary against a process running as the same user
-
-**GCS** — strong enforcement via IAM Conditions:
-- Photo immutability: deny `storage.objects.create` / `storage.objects.delete` on photo prefixes for all agents except ingestion
-- Metadata write-scoping: allow `storage.objects.create` on XMP/manifest prefixes only for housekeeping/enrichment service accounts
-- IAM Conditions support `resource.name` prefix matching for path-level scoping
-- Consumption agents receive `storage.objects.get` only
-
-**ADLS Gen2** — strong enforcement via POSIX ACLs:
-- ADLS Gen2 with hierarchical namespace enabled supports POSIX-like ACLs at the directory and file level
-- Photo immutability: set read + execute on photo directories, no write, for all agent service principals except ingestion
-- Metadata write-scoping: grant write on XMP/manifest paths only to housekeeping/enrichment principals
-- Combined with Azure RBAC for coarse-grained access and ACLs for fine-grained path control
-
-**OneDrive / Kdrive** — application-level enforcement only:
-- These consumer-grade APIs do not support fine-grained path-based or suffix-based ACLs
-- Read-only sharing links can protect consumption agents, but there is no way to allow "write XMP but not photos" at the provider level
-- Mitigation: the application layer enforces scopes before issuing any write call
+### Immutability Enforcement Summary
 
 | Backend | Photo immutability | Metadata write scoping | Enforcement level |
 |---|---|---|---|
@@ -560,15 +424,7 @@ Photo immutability and metadata write-scoping can be enforced at the backend lev
 
 ### Encryption in Transit
 
-- Cloud storage: TLS enforced for all API calls (HTTPS). This is standard for S3, GCS, ADLS Gen2, OneDrive, and Kdrive.
+- Cloud storage: TLS enforced for all API calls (HTTPS).
 - Local storage: Not applicable (no network transit).
 
-### Threat Model Summary
-
-| Threat | Local mitigation | Cloud mitigation |
-|---|---|---|
-| Unauthorized access | OS auth + filesystem permissions | Scoped short-lived tokens |
-| Data exfiltration by rogue agent | App sandbox / in-process scope check | IAM policy restricts paths + actions |
-| Credential theft | OS keychain | Master credential never leaves device; scoped tokens expire |
-| Data at rest exposure | OS-level disk encryption | Provider-side encryption (SSE-S3, Azure Storage encryption, OneDrive encryption) |
-| Man-in-the-middle | N/A (local) | TLS enforced |
+See [HLD_rationale.md § Security](HLD_rationale.md#security-and-access-control) for detailed per-backend enforcement mechanisms and threat model analysis.
