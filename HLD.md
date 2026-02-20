@@ -213,9 +213,14 @@ XMP sidecars are read only by write-path agents, never by consumption:
 
 ## Thumbnail Storage
 
-Each folder stores its thumbnails as a single **AVIF grid** file (M x N tiles). Each tile is an independent AV1 stream that can be decoded without reading the full container.
+Thumbnails use a **two-tier** system, both stored as AVIF grid containers (M x N tiles, each tile independently decodable):
 
-See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) for the format analysis, alternatives comparison, and platform support details.
+| Tier | File | Resolution | Purpose | Size per 1,000 photos |
+|---|---|---|---|---|
+| Grid thumbnail | `thumbnails.avif` | 256px (short edge) | Gallery grid browsing | ~5-8 MB |
+| Preview | `previews.avif` | 1440px (short edge) | Single-photo view before loading original | ~80-120 MB |
+
+See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) for the format analysis, industry standards research, size estimates math, and alternatives comparison.
 
 ```
 /2024/
@@ -224,7 +229,8 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 ├── 2024-07/
 │   ├── .ouestcharlie/
 │   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
-│   │   └── thumbnails.avif       ← grid of all partition thumbnails
+│   │   ├── thumbnails.avif       ← 256px grid for gallery browsing
+│   │   └── previews.avif         ← 1440px grid for single-photo view
 │   ├── IMG_001.jpg
 │   ├── IMG_001.xmp
 │   ├── IMG_002.heic
@@ -235,7 +241,7 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 └── ...
 ```
 
-The manifest records the grid layout (tile order mapping to photo files, grid dimensions, thumbnail resolution) so consumption agents can request specific tiles by index.
+The manifest records the grid layout for each tier (tile order mapping to photo files, grid dimensions, resolution) so consumption agents can request specific tiles by index.
 
 ## Albums
 
