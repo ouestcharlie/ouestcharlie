@@ -441,19 +441,30 @@ Each agent is self-contained and idempotent: it receives a scoped token and a ta
 
 ### Agent-to-controller communication
 
-Agents communicate with Woof via a localhost HTTP API (see [controler_api.json](controler_api.json) for the OpenAPI specification). Agents report:
+Agents communicate with Woof using the **Model Context Protocol (MCP)**. Woof is the MCP client; each agent is an MCP server that exposes its capabilities as MCP tools.
 
-- **Heartbeat with progress**: periodic updates during execution (partition, items processed, current operation)
-- **Completion**: final summary (photos processed, artifacts written, error count)
-- **Failure**: error detail with category (transient, permanent, configuration), affected photo, and operation
-- **Non-fatal errors**: per-photo errors that don't abort the run
+**Transport**: stdio for agents running as child processes (default). Streamable HTTP for agents running as separate processes or containers.
 
-Woof detects stuck agents via heartbeat timeout (default: 5 minutes without heartbeat) and revokes their scoped token.
+**Protocol mapping**:
+
+| Concern | MCP mechanism |
+|---|---|
+| Agent registration | `initialize` handshake — agent declares its tools and capabilities |
+| Capability declaration | MCP tool definitions — each agent exposes typed tools (e.g., `rebuild_partition`, `enrich_faces`) |
+| Progress reporting | `notifications/progress` on the tool call's progress token |
+| Completion | Tool call result — returns a structured summary |
+| Failure | Tool call error — returns error detail with category, affected photo, and operation |
+| Non-fatal per-photo errors | `notifications/message` (log level: error) — agent logs per-photo errors without aborting |
+| Cancellation | `notifications/cancelled` — Woof cancels a running tool call; agent terminates gracefully |
+
+Woof detects stuck agents via progress token timeout (default: 5 minutes without progress notification) and cancels the tool call.
+
+See [controller_api.json](controller_api.json) for MCP tool definitions (per-agent `tools/list` responses with JSON Schema input/output).
 
 For detailed Woof requirements, design, and rationale, see:
 - [woof/woof_LLR.md](woof/woof_LLR.md) — low-level requirements
 - [woof/woof_LLD.md](woof/woof_LLD.md) — low-level design
-- [HLD_rationale.md § Agent Observability](HLD_rationale.md#agent-observability-why-http-over-in-process-callbacks) — rationale for the HTTP approach
+- [HLD_rationale.md § Agent Communication](HLD_rationale.md#agent-communication-why-mcp) — rationale for the MCP approach
 
 ## Efficient Filtering and Pruning
 

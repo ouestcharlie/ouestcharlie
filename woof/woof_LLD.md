@@ -1,34 +1,35 @@
 # Woof Low-Level Design
 
-This document details the internal design of Woof. For requirements, see [woof_LLR.md](woof_LLR.md). For the HTTP API specification, see [controler_api.md](../controler_api.md).
+This document details the internal design of Woof. For requirements, see [woof_LLR.md](woof_LLR.md). For MCP tool definitions, see [controller_api.json](../controller_api.json).
 
 ## Architecture Overview
 
 Woof runs as a long-lived process on the user's device. It serves two roles:
 
 1. **UI backend**: serves the photo browsing experience (web, mobile, desktop)
-2. **Controller API**: a localhost HTTP server that agents call for lifecycle reporting
+2. **MCP client**: communicates with agents via the Model Context Protocol
 
 Both roles share a single process and in-memory state.
 
-## Controller HTTP Server
+## MCP Client
 
-Woof runs a lightweight HTTP server bound to `127.0.0.1` on a configurable port (default: `19847`). This server is the sole communication channel between Woof and agents.
+Woof acts as an MCP client. Each agent is an MCP server that exposes its capabilities as tools.
 
-### Binding and security
+### Transport
 
-- **Localhost only**: the server binds to `127.0.0.1`, not `0.0.0.0` — it is not reachable from the network
-- **Bearer token authentication**: each agent receives a unique bearer token when launched. The controller API validates this token on every request to prevent unauthorized access from other local processes
-- **No TLS**: since traffic is localhost-only, TLS is unnecessary
+- **stdio** (default): Woof launches agents as child processes and communicates over stdin/stdout. This is the simplest model — no port management, no network exposure, no authentication layer needed. The OS process boundary provides isolation.
+- **Streamable HTTP**: for agents running as separate processes or containers, Woof connects via HTTP. The agent exposes an MCP endpoint on a configurable URL.
 
-### Port discovery
+### Agent launch (stdio transport)
 
-When Woof launches an agent, it passes the controller URL (`http://127.0.0.1:{port}`) and the bearer token as environment variables:
+When Woof launches an agent as a child process, it passes backend credentials and scope as environment variables:
 
 ```
-WOOF_CONTROLLER_URL=http://127.0.0.1:19847
-WOOF_AGENT_TOKEN=<unique-bearer-token>
+WOOF_BACKEND_CONFIG=<JSON backend connection info>
+WOOF_AGENT_TOKEN=<scoped-storage-token>
 ```
+
+Woof then performs the MCP `initialize` handshake over stdio, receiving the agent's tool definitions and capabilities.
 
 ## Agent Lifecycle State Machine
 
@@ -48,11 +49,12 @@ Woof maintains the state of each agent run in memory and persists it to `activit
 
 ### Timeout detection
 
-Woof runs a periodic check (every 60 seconds) against all `running` agents. If an agent's last heartbeat is older than the configured timeout (default: 5 minutes):
+Woof runs a periodic check (every 60 seconds) against all `running` agents. If an agent's last `notifications/progress` is older than the configured timeout (default: 5 minutes):
 
-1. Agent state transitions to `timeout`
-2. Woof revokes the agent's scoped storage token (if the backend supports revocation) or lets it expire
-3. The activity log entry is updated with status `timeout` and the last known progress
+1. Woof sends `notifications/cancelled` to the agent's MCP server
+2. Agent state transitions to `timeout`
+3. Woof revokes the agent's scoped storage token (if the backend supports revocation) or lets it expire
+4. The activity log entry is updated with status `timeout` and the last known progress
 
 ### Agent chaining
 
@@ -64,7 +66,7 @@ After an agent completes successfully, Woof evaluates whether dependent agents s
 | Housekeeping | Enrichment | If unenriched photos exist in affected partitions |
 | Change detection (dirty partition) | Housekeeping | After debounce window expires |
 
-Chaining is configured declaratively, not hardcoded — new agent types can declare their dependencies at registration time.
+Chaining is configured declaratively, not hardcoded — new agent types can declare their dependencies during the MCP `initialize` handshake.
 
 ## Activity Log
 

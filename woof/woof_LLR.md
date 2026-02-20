@@ -4,18 +4,21 @@ This document captures the requirements for Woof, the user-facing controller com
 
 ## Agent Lifecycle Management
 
-- Woof shall expose an HTTP API on localhost for agent communication (see [controler_api.md](../controler_api.md))
+- Woof shall act as an MCP client, communicating with agents via the Model Context Protocol (see [controller_api.json](../controller_api.json) for tool definitions)
+- Woof shall support two MCP transports: stdio for child process agents (default), Streamable HTTP for networked agents
 - Woof shall track each agent run through a state machine: `pending → running → completed | failed | timeout`
-- Woof shall detect stuck agents via heartbeat timeout (default: 5 minutes without heartbeat) and transition them to `timeout` state
+- Woof shall detect stuck agents via progress token timeout (default: 5 minutes without `notifications/progress`) and transition them to `timeout` state
 - Woof shall revoke the scoped token of any agent that transitions to `timeout` or is cancelled by the user
+- Woof shall cancel running tool calls via `notifications/cancelled` when an agent is timed out or user-cancelled
 - Woof shall chain dependent agents automatically (e.g., ingestion → housekeeping → enrichment) without user intervention once the initial trigger is approved
 
 ## Agent Progress Reporting
 
-- Agents shall report progress to Woof via periodic heartbeat calls to the controller API
-- Each heartbeat shall include: partition being processed, items processed, total items, and current operation
-- Agents shall report completion with a summary: photos processed, errors encountered, artifacts written
-- Agents shall report failure with actionable context: which photo, which operation, what error
+- Agents shall report progress via MCP `notifications/progress` on the tool call's progress token
+- Each progress notification shall include: partition being processed, items processed, total items, and current operation (via the `message` field)
+- Agents shall report completion as a tool call result with a structured summary: photos processed, errors encountered, artifacts written
+- Agents shall report failure as a tool call error with actionable context: which photo, which operation, what error
+- Agents shall report non-fatal per-photo errors via MCP `notifications/message` (log level: error) without aborting the run
 
 ## Observability
 

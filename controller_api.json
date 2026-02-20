@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OuEstCharlie MCP Agent Interface",
+  "description": "MCP tool definitions for OuEstCharlie agents. Each agent type is an MCP server exposing tools that Woof (MCP client) invokes. This file documents the tools/list response for each agent type, plus shared schemas for progress notifications and logging.",
+  "protocolVersion": "2025-11-25",
+  "agents": {
+    "housekeeping": {
+      "serverInfo": {
+        "name": "ouestcharlie-housekeeping",
+        "version": "1.0.0"
+      },
+      "capabilities": {
+        "tools": {},
+        "logging": {}
+      },
+      "tools": [
+        {
+          "name": "rebuild_partition",
+          "description": "Reconcile a partition: re-read changed XMP sidecars, remove entries for deleted photos, clean up orphaned sidecars, generate XMP for new photos (EXIF extraction), rebuild manifest and thumbnail/preview containers.",
+          "inputSchema": {
+            "type": "object",
+            "required": ["backend", "partition"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "description": "Backend name from config.json",
+                "examples": ["cloud-s3", "local"]
+              },
+              "partition": {
+                "type": "string",
+                "description": "Partition path to reconcile",
+                "examples": ["2024/2024-07/"]
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["thorough", "lazy"],
+                "default": "lazy",
+                "description": "thorough: full scan and rebuild. lazy: incremental based on detected changes."
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["photosProcessed", "errors"],
+            "properties": {
+              "photosProcessed": {
+                "type": "integer",
+                "examples": [1023]
+              },
+              "sidecarsCreated": {
+                "type": "integer",
+                "examples": [12]
+              },
+              "sidecarsUpdated": {
+                "type": "integer",
+                "examples": [5]
+              },
+              "orphanedSidecarsCleaned": {
+                "type": "integer",
+                "examples": [2]
+              },
+              "thumbnailsRebuilt": {
+                "type": "boolean"
+              },
+              "previewsRebuilt": {
+                "type": "boolean"
+              },
+              "manifestsUpdated": {
+                "type": "array",
+                "items": { "type": "string" },
+                "examples": [["2024/2024-07/.ouestcharlie/manifest.json"]]
+              },
+              "errors": {
+                "type": "integer",
+                "examples": [0]
+              }
+            }
+          },
+          "annotations": {
+            "title": "Rebuild Partition",
+            "readOnlyHint": false,
+            "destructiveHint": false
+          }
+        },
+        {
+          "name": "find_duplicates",
+          "description": "Scan manifest tree for duplicate content hashes within a backend.",
+          "inputSchema": {
+            "type": "object",
+            "required": ["backend"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "description": "Backend name from config.json"
+              },
+              "scope": {
+                "type": "string",
+                "description": "Optional subtree to limit scan",
+                "examples": ["2024/"]
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["duplicateGroups", "totalDuplicates"],
+            "properties": {
+              "duplicateGroups": {
+                "type": "integer",
+                "description": "Number of distinct content hashes with multiple files"
+              },
+              "totalDuplicates": {
+                "type": "integer",
+                "description": "Total number of duplicate files (excluding the original)"
+              }
+            }
+          },
+          "annotations": {
+            "title": "Find Duplicates",
+            "readOnlyHint": true
+          }
+        }
+      ]
+    },
+    "enrichment": {
+      "serverInfo": {
+        "name": "ouestcharlie-enrichment",
+        "version": "1.0.0"
+      },
+      "capabilities": {
+        "tools": {},
+        "logging": {}
+      },
+      "tools": [
+        {
+          "name": "enrich_faces",
+          "description": "Detect and tag faces in photos that lack ouestcharlie:faces metadata. Reads photos for pixel analysis, writes face tags to XMP sidecars.",
+          "inputSchema": {
+            "type": "object",
+            "required": ["backend", "partition"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "description": "Backend name from config.json"
+              },
+              "partition": {
+                "type": "string",
+                "description": "Partition path to enrich",
+                "examples": ["2024/2024-07/"]
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["photosProcessed", "photosEnriched", "errors"],
+            "properties": {
+              "photosProcessed": {
+                "type": "integer"
+              },
+              "photosEnriched": {
+                "type": "integer",
+                "description": "Photos where face tags were written"
+              },
+              "facesDetected": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer"
+              }
+            }
+          },
+          "annotations": {
+            "title": "Enrich Faces",
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "enrich_scene",
+          "description": "Classify scenes in photos that lack ouestcharlie:scene metadata. Reads photos for pixel analysis, writes scene tags to XMP sidecars.",
+          "inputSchema": {
+            "type": "object",
+            "required": ["backend", "partition"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "description": "Backend name from config.json"
+              },
+              "partition": {
+                "type": "string",
+                "description": "Partition path to enrich",
+                "examples": ["2024/2024-07/"]
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["photosProcessed", "photosEnriched", "errors"],
+            "properties": {
+              "photosProcessed": {
+                "type": "integer"
+              },
+              "photosEnriched": {
+                "type": "integer",
+                "description": "Photos where scene tags were written"
+              },
+              "errors": {
+                "type": "integer"
+              }
+            }
+          },
+          "annotations": {
+            "title": "Enrich Scenes",
+            "readOnlyHint": false
+          }
+        }
+      ]
+    },
+    "ingestion": {
+      "serverInfo": {
+        "name": "ouestcharlie-ingestion",
+        "version": "1.0.0"
+      },
+      "capabilities": {
+        "tools": {},
+        "logging": {}
+      },
+      "tools": [
+        {
+          "name": "ingest_photos",
+          "description": "Import photos into a backend using date-based partitioning. Computes content hash, extracts EXIF into XMP sidecar, places photo in the appropriate partition.",
+          "inputSchema": {
+            "type": "object",
+            "required": ["backend", "source"],
+            "properties": {
+              "backend": {
+                "type": "string",
+                "description": "Target backend name from config.json"
+              },
+              "source": {
+                "type": "string",
+                "description": "Source path or URI for photos to ingest",
+                "examples": ["/Users/alice/DCIM/"]
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["photosIngested", "duplicatesSkipped", "errors"],
+            "properties": {
+              "photosIngested": {
+                "type": "integer"
+              },
+              "duplicatesSkipped": {
+                "type": "integer",
+                "description": "Photos skipped because content hash already exists in backend"
+              },
+              "partitionsAffected": {
+                "type": "array",
+                "items": { "type": "string" },
+                "examples": [["2024/2024-07/", "2024/2024-08/"]]
+              },
+              "errors": {
+                "type": "integer"
+              }
+            }
+          },
+          "annotations": {
+            "title": "Ingest Photos",
+            "readOnlyHint": false
+          }
+        }
+      ]
+    }
+  },
+  "notifications": {
+    "progress": {
+      "description": "Agents report progress via MCP notifications/progress on the tool call's progress token. The message field carries structured progress info.",
+      "example": {
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": {
+          "progressToken": "tool-call-123",
+          "progress": 450,
+          "total": 1000,
+          "message": "generating thumbnails — partition 2024/2024-07/"
+        }
+      }
+    },
+    "logging": {
+      "description": "Agents report non-fatal per-photo errors via MCP notifications/message at log level 'error'. The data field carries structured error info.",
+      "example": {
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+          "level": "error",
+          "logger": "ouestcharlie-housekeeping",
+          "data": {
+            "category": "permanent",
+            "message": "Failed to decode EXIF: truncated IFD at offset 0x1A2",
+            "partition": "2024/2024-07/",
+            "photo": "IMG_042.cr3",
+            "operation": "EXIF extraction"
+          }
+        }
+      }
+    },
+    "cancellation": {
+      "description": "Woof cancels a running tool call by sending notifications/cancelled. The agent should terminate gracefully.",
+      "example": {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+          "requestId": "tool-call-123",
+          "reason": "User cancelled"
+        }
+      }
+    }
+  },
+  "errorCategories": {
+    "description": "Error categories used in logging notifications and tool call errors.",
+    "values": {
+      "transient": "Network timeout, rate limit — Woof auto-retries (up to 3 times)",
+      "permanent": "Corrupt file, unsupported format — photo skipped, flagged to user",
+      "configuration": "Invalid credentials, missing permissions — agent paused until resolved"
+    }
+  }
+}

@@ -234,19 +234,28 @@ Photo immutability and metadata write-scoping can be enforced at the backend lev
 | Data at rest exposure | OS-level disk encryption | Provider-side encryption (SSE-S3, Azure Storage encryption, OneDrive encryption) |
 | Man-in-the-middle | N/A (local) | TLS enforced |
 
-## Agent Observability: Why HTTP over In-Process Callbacks
+## Agent Communication: Why MCP
 
-Two approaches were considered for agent → Woof communication:
+Three approaches were considered for agent → Woof communication:
 
 | Approach | Pros | Cons |
 |---|---|---|
 | In-process callback (function call) | Simple, no network; natural for threads | Couples agent to Woof's process; doesn't work for out-of-process agents |
-| **Localhost HTTP endpoint** | Works for any agent process model (thread, process, container); extensible; standard tooling | Port management; slightly more overhead |
+| Custom localhost HTTP API | Works for any process model; simple to implement | Custom protocol — every agent must implement the specific API; no ecosystem tooling |
+| **Model Context Protocol (MCP)** | Open standard; multi-transport (stdio, HTTP); typed tool schemas; built-in progress, logging, cancellation | Newer protocol; slightly more ceremony for simple agents |
 
-**Decision**: localhost HTTP endpoint.
+**Decision**: MCP (protocol version 2025-11-25).
 
-- **Process model independence**: agents can be threads, child processes, or future containerized workloads — the same API works for all. In-process callbacks would require rearchitecting if the agent model evolves.
-- **Standard tooling**: any language/runtime can make HTTP calls. No Woof SDK dependency needed for agent authors.
-- **Debuggability**: HTTP requests are inspectable with standard tools (curl, logs). In-process callbacks are opaque.
-- **Cancellation channel**: the heartbeat response includes `shouldCancel`, giving Woof a natural cooperative cancellation mechanism without OS signals.
-- **Security**: bearer token per agent run prevents unauthorized local processes from impersonating agents. Localhost binding prevents network exposure.
+- **Open standard**: MCP is an open protocol by Anthropic with growing ecosystem adoption. Agent authors can use existing MCP SDKs (TypeScript, Python, Java, Kotlin) instead of implementing a custom HTTP client.
+- **Multi-transport**: stdio for child process agents (zero network overhead, no port management), Streamable HTTP for networked agents — same protocol, same tool schemas over both transports.
+- **Typed tool schemas**: each agent declares its tools with JSON Schema input/output definitions during the `initialize` handshake. Woof validates inputs before invocation and can present tool capabilities to the user for approval.
+- **Built-in progress reporting**: MCP's `notifications/progress` with progress tokens replaces the custom heartbeat endpoint. Progress is scoped to individual tool calls, not agent-global.
+- **Built-in logging**: MCP's `notifications/message` with severity levels (debug through emergency) replaces the custom per-photo error endpoint. Log messages are structured and typed.
+- **Built-in cancellation**: MCP's `notifications/cancelled` provides cooperative cancellation without embedding cancel signals in heartbeat responses.
+- **Capability negotiation**: the `initialize` handshake lets Woof and agents agree on supported features (tools, logging, etc.) before any work begins. New capabilities can be added without breaking existing agents.
+- **Agent chaining metadata**: agents can declare their dependencies (e.g., "run housekeeping after me") as part of their server info during `initialize`, enabling declarative chaining.
+
+**References:**
+- [MCP Specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25)
+- [MCP TypeScript Schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-11-25/schema.ts)
+- [MCP GitHub Repository](https://github.com/modelcontextprotocol/modelcontextprotocol)
