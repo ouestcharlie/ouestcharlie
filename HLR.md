@@ -38,7 +38,7 @@ Three categories of agents, all orchestrated by Woof:
 Albums are virtual collections implemented as XMP tags and saved filters — no separate data structure needed.
 
 - **Smart albums**: Saved predicates over existing metadata (e.g., "Vacation 2024" = `date in 2024 AND tag contains "travel"`). Pure read queries, zero additional storage.
-- **Manual albums**: Adding a photo to an album writes an `album:<name>` tag to its XMP sidecar. The album is then a filter: `tag contains "album:<name>"`. A photo can belong to multiple albums without copying.
+- **Manual albums**: Adding a photo to an album writes an `album/<name>` tag to its XMP sidecar. The album is then a filter: `tag contains "album/<name>"`. A photo can belong to multiple albums without copying.
 
 Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharlie/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
 

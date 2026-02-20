@@ -40,10 +40,6 @@ Agents are "self-contained and idempotent" and Woof "monitors progress" — but 
 
 The HLR says XMP enables interop with Lightroom/darktable, and index mode preserves existing XMP. But the HLD doesn't address: what happens when an external tool modifies an XMP sidecar after OuEstCharlie has indexed it? The manifest is now stale. Is there a file-watching mechanism? A periodic housekeeping scan? How is the change detected?
 
-## 11. Album tag namespace collision
-
-Manual albums use `album/<name>` tags in XMP. If a user creates an album named `travel` and also uses `tag:travel` for smart albums, the semantics overlap. The HLR uses `album:<name>` syntax while the HLD uses `album/<name>` — the notation isn't even consistent between the two documents.
-
 ---
 
 **Most critical gaps**: deletion model (#2), XMP conflict resolution (#3), and thumbnail random access mechanics (#8) — these are areas where the current design would hit real implementation blockers.
