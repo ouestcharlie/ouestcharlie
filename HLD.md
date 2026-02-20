@@ -200,6 +200,14 @@ Manifests are structured hierarchically: a parent folder's manifest consolidates
 | Year | Consolidates month summaries (bloom filters, min/max dates, tag unions) | ~10-20 KB |
 | Leaf (month) | Full per-photo metadata inline + partition summary | ~1-1.5 MB |
 
+### Schema evolution
+
+Manifests carry a `schemaVersion` field scoped to the `ouestcharlie:` namespace — the only namespace whose semantics OuEstCharlie controls. Schema evolution rules:
+
+- **Unknown fields are ignored and preserved**: an agent encountering an unrecognized field passes it through unchanged, both in manifests and XMP sidecars. This is standard XMP behavior, extended to manifests.
+- **`schemaVersion` governs `ouestcharlie:` fields only**: it tells agents how to interpret OuEstCharlie-specific fields (e.g., a new `ouestcharlie:locationBoundingBox` added in schema v2). Fields outside the `ouestcharlie:` namespace (standard XMP, Dublin Core, EXIF) are unaffected.
+- **Migration = housekeeping rebuild**: when the schema advances, Woof triggers a housekeeping agent that re-reads XMP sidecars and writes manifests in the new format. No separate migration tooling — this is already a supported operation.
+
 ### When XMP sidecars are read
 
 XMP sidecars are read only by write-path agents, never by consumption:
@@ -210,6 +218,29 @@ XMP sidecars are read only by write-path agents, never by consumption:
 | Enrichment agent (add tags, faces) | Yes (read-modify-write) | Yes (to find unenriched photos) |
 | Housekeeping manifest rebuild | Yes (recompute from sidecars) | No (rebuilding it) |
 | External tool access (Lightroom, ExifTool) | Yes | No (unaware of manifests) |
+
+### Change detection
+
+External tools (Lightroom, darktable, ExifTool) may modify XMP sidecars outside of OuEstCharlie. To keep manifests in sync, Woof detects changes through two complementary mechanisms — **triggers** for near-real-time awareness and **sweep** as a catch-all:
+
+| Backend | Trigger | Sweep |
+|---|---|---|
+| Local filesystem | OS file watching (`FSEvents`, `inotify`, `ReadDirectoryChangesW`) | Compare XMP `mtime` against value stored in manifest |
+| S3 | S3 Event Notifications → SNS/SQS on `PutObject` for `*.xmp` | Compare `ETag` / `LastModified` against manifest |
+| GCS | Pub/Sub object change notifications | Compare `generation` number against manifest |
+| ADLS Gen2 | Azure Event Grid blob events | Compare `ETag` against manifest |
+| OneDrive | Microsoft Graph delta query | Delta query *is* the sweep |
+| Kdrive | Webhook or polling API | API listing with `modified_at` filter |
+
+The leaf manifest stores each XMP sidecar's **last-known version token** (mtime, ETag, or generation depending on backend). The sweep compares current tokens against stored ones — no XMP content reads needed to detect changes.
+
+**Debouncing**: Changes are not acted on individually. Woof accumulates dirty partitions and schedules housekeeping after a quiet period (default: 10 minutes since the last detected change in a partition). This avoids thrashing when an external tool writes many sidecars in sequence (e.g., Lightroom batch-editing 500 photos).
+
+The flow:
+1. Trigger or sweep detects XMP version token mismatch → partition marked dirty
+2. Woof waits for the debounce window to expire (no new changes in the partition for 10 minutes)
+3. Woof schedules a housekeeping agent on the dirty partition
+4. Housekeeping re-reads changed XMP sidecars, updates manifest and thumbnails if needed
 
 ## Thumbnail Storage
 
