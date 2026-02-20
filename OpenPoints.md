@@ -12,10 +12,4 @@ The architecture has local + cloud backends, but there's no design for what happ
 
 The HLD shows filter examples like `date:2024 AND tag:travel` and `rating >= 4` but never defines the query language. Bloom filters are mentioned for pruning, but what fields are indexed? What operators are supported? This is central to how consumption agents work.
 
-## 9. No observability or error recovery for agents
 
-Agents are "self-contained and idempotent" and Woof "monitors progress" — but there's no design for: how does Woof know an agent is stuck? What does the agent report? Where are logs? How does a user understand why their library is missing thumbnails for a folder?
-
----
-
-**Remaining items**: offline story (#4), query language (#7), and agent observability (#9).

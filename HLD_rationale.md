@@ -233,3 +233,20 @@ Photo immutability and metadata write-scoping can be enforced at the backend lev
 | Credential theft | OS keychain | Master credential never leaves device; scoped tokens expire |
 | Data at rest exposure | OS-level disk encryption | Provider-side encryption (SSE-S3, Azure Storage encryption, OneDrive encryption) |
 | Man-in-the-middle | N/A (local) | TLS enforced |
+
+## Agent Observability: Why HTTP over In-Process Callbacks
+
+Two approaches were considered for agent → Woof communication:
+
+| Approach | Pros | Cons |
+|---|---|---|
+| In-process callback (function call) | Simple, no network; natural for threads | Couples agent to Woof's process; doesn't work for out-of-process agents |
+| **Localhost HTTP endpoint** | Works for any agent process model (thread, process, container); extensible; standard tooling | Port management; slightly more overhead |
+
+**Decision**: localhost HTTP endpoint.
+
+- **Process model independence**: agents can be threads, child processes, or future containerized workloads — the same API works for all. In-process callbacks would require rearchitecting if the agent model evolves.
+- **Standard tooling**: any language/runtime can make HTTP calls. No Woof SDK dependency needed for agent authors.
+- **Debuggability**: HTTP requests are inspectable with standard tools (curl, logs). In-process callbacks are opaque.
+- **Cancellation channel**: the heartbeat response includes `shouldCancel`, giving Woof a natural cooperative cancellation mechanism without OS signals.
+- **Security**: bearer token per agent run prevents unauthorized local processes from impersonating agents. Localhost binding prevents network exposure.

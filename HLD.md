@@ -439,6 +439,22 @@ Woof orchestrates all agent execution. Agents do not self-schedule or communicat
 
 Each agent is self-contained and idempotent: it receives a scoped token and a task from Woof, executes it, and terminates. It can be interrupted and restarted safely. Woof chains dependent agents — for example, after ingestion completes, Woof triggers housekeeping (thumbnails + manifest rebuild), then enrichment.
 
+### Agent-to-controller communication
+
+Agents communicate with Woof via a localhost HTTP API (see [controler_api.json](controler_api.json) for the OpenAPI specification). Agents report:
+
+- **Heartbeat with progress**: periodic updates during execution (partition, items processed, current operation)
+- **Completion**: final summary (photos processed, artifacts written, error count)
+- **Failure**: error detail with category (transient, permanent, configuration), affected photo, and operation
+- **Non-fatal errors**: per-photo errors that don't abort the run
+
+Woof detects stuck agents via heartbeat timeout (default: 5 minutes without heartbeat) and revokes their scoped token.
+
+For detailed Woof requirements, design, and rationale, see:
+- [woof/woof_LLR.md](woof/woof_LLR.md) — low-level requirements
+- [woof/woof_LLD.md](woof/woof_LLD.md) — low-level design
+- [HLD_rationale.md § Agent Observability](HLD_rationale.md#agent-observability-why-http-over-in-process-callbacks) — rationale for the HTTP approach
+
 ## Efficient Filtering and Pruning
 
 Querying photos across a large collection uses a **two-level pruning strategy** inspired by data lakehouse query planning:
