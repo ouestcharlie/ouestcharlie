@@ -145,6 +145,27 @@ The two-tier overhead is **~1-2% of original storage** — negligible cost for a
 - [Best Settings for AVIF Encoding](https://openaviffile.com/best-settings-for-avif-encoding/)
 - [AVIF compression explained - BulkImagePro](https://bulkimagepro.com/articles/avif-image-compression/)
 
+## Thumbnail Rebuild Strategy
+
+### Why full rebuild instead of incremental append
+
+AVIF grid containers do not support incremental tile append — no mainstream library (libavif, cavif) exposes this capability, and the ISOBMFF header structures (grid layout, `iloc`, `iref`) would need rewriting.
+
+Full rebuild is acceptable because:
+- Rebuilds are batched by the change detection debounce window (default 10 minutes), not triggered per-photo
+- Thumbnail containers (~5-8 MB for 1,000 photos at 256px) encode in seconds — 1,000 tiny AV1 tiles are fast
+- Preview containers (~80-120 MB at 1440px) are heavier but encoding is parallelizable across tiles and only happens during housekeeping, never in the hot path
+
+### Why a tile cache
+
+The housekeeping agent caches individual encoded AV1 tile bitstreams on disk. On rebuild, only new or changed tiles are re-encoded — unchanged tiles are reused byte-for-byte. This reduces the rebuild to assembling the ISOBMFF container from cached tiles, which is I/O-bound rather than compute-bound.
+
+**References:**
+- [ISOBMFF specification (ISO 14496-12)](https://www.iso.org/standard/83102.html) — container format underlying AVIF
+- [libavif API - avifEncoder](https://github.com/AOMediaCodec/libavif/blob/main/include/avif/avif.h) — no incremental grid append API
+- [AV1 Bitstream & Decoding Process Specification](https://aomedia.org/av1-bitstream-and-decoding-process-specification/) — tile independence in AV1
+- [AVIF specification § Grid derivation](https://aomedia.org/specifications/avif/) — grid item structure within ISOBMFF
+
 ## Albums
 
 ### Why album definitions are device-local

@@ -221,7 +221,7 @@ XMP sidecars are read only by write-path agents, never by consumption:
 
 ### Change detection
 
-External tools (Lightroom, darktable, ExifTool) may modify XMP sidecars outside of OuEstCharlie. To keep manifests in sync, Woof detects changes through two complementary mechanisms — **triggers** for near-real-time awareness and **sweep** as a catch-all:
+Per the HLR, OuEstCharlie does not provide edit or delete operations — changes happen externally. The change detection mechanism covers XMP modifications, photo deletions, and photo additions. Woof detects changes through two complementary mechanisms — **triggers** for near-real-time awareness and **sweep** as a catch-all:
 
 | Backend | Trigger | Sweep |
 |---|---|---|
@@ -237,10 +237,10 @@ The leaf manifest stores each XMP sidecar's **last-known version token** (mtime,
 **Debouncing**: Changes are not acted on individually. Woof accumulates dirty partitions and schedules housekeeping after a quiet period (default: 10 minutes since the last detected change in a partition). This avoids thrashing when an external tool writes many sidecars in sequence (e.g., Lightroom batch-editing 500 photos).
 
 The flow:
-1. Trigger or sweep detects XMP version token mismatch → partition marked dirty
+1. Trigger or sweep detects a change (XMP version token mismatch, missing photo file, or new photo file) → partition marked dirty
 2. Woof waits for the debounce window to expire (no new changes in the partition for 10 minutes)
 3. Woof schedules a housekeeping agent on the dirty partition
-4. Housekeeping re-reads changed XMP sidecars, updates manifest and thumbnails if needed
+4. Housekeeping reconciles the partition: re-reads changed XMP sidecars, removes entries for deleted photos, cleans up orphaned XMP sidecars (sidecar exists but photo file is gone), generates XMP for new photos (EXIF extraction), and rebuilds the manifest and thumbnail/preview containers
 
 ## Thumbnail Storage
 
@@ -281,6 +281,12 @@ AVIF containers are downloaded in full and **cached on device**. At ~5-8 MB per 
 For local backends, containers are read directly from disk — no caching layer needed.
 
 Cache invalidation is straightforward: when a housekeeping agent rebuilds a thumbnail container (e.g., after new photos are ingested), it updates the container's content hash in the manifest. Consumption agents compare the manifest hash against their cached copy and re-fetch on mismatch.
+
+### Rebuild strategy
+
+When a partition changes (photo added, deleted, or re-encoded), thumbnail and preview containers are **rebuilt in full** — AVIF grid containers do not support incremental tile append. The housekeeping agent maintains a **tile cache** of individual encoded AV1 bitstreams, so only new or changed tiles are re-encoded; unchanged tiles are reused byte-for-byte. The rebuild reduces to reassembling the container from cached tiles.
+
+See [HLD_rationale.md § Thumbnail Rebuild Strategy](HLD_rationale.md#thumbnail-rebuild-strategy) for why full rebuild is acceptable and alternatives analysis.
 
 ## Albums
 
@@ -377,6 +383,10 @@ Manifests use the same optimistic concurrency pattern:
 4. If the manifest was modified by another agent in the meantime, the commit fails and the agent retries with the latest version
 
 Conflict resolution for manifests is straightforward since they are derived from the underlying XMP files — any agent can recompute a manifest from scratch if needed.
+
+### Thumbnail and preview concurrency
+
+Thumbnail and preview AVIF containers use the same optimistic concurrency as manifests — they are derived artifacts that can be rebuilt from source photos. The housekeeping agent writes the container atomically (write-then-rename or conditional PUT), and the manifest records the container's content hash. If two agents attempt to rebuild the same container concurrently, the same retry logic applies: the losing write detects the version mismatch and re-evaluates whether a rebuild is still needed.
 
 ## Content-Based Identity and Cross-Backend Deduplication
 

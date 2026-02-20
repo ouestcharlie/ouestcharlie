@@ -4,17 +4,9 @@
 
 The HLR says "photo management" but modern phone libraries are 30-50% video. The design never addresses whether video is in scope, out of scope, or deferred. If it's out of scope, it should say so explicitly — otherwise every design decision (AVIF containers, EXIF extraction, thumbnail tiers, size estimates) implicitly excludes video without acknowledging it.
 
-## 2. No deletion or trash model
-
-Photos are "immutable after ingestion" but there's no design for what happens when a user wants to delete a photo. No trash/soft-delete mechanism, no tombstone in manifests, no propagation of deletion across backends. This is a core user operation with no coverage.
-
 ## 4. No offline / partial-connectivity story
 
 The architecture has local + cloud backends, but there's no design for what happens when the cloud is unreachable. Can the user still browse? Are manifests cached locally? What about writes queued for sync? This is critical for mobile use cases (mobile backup is explicitly listed as a use case).
-
-## 6. Thumbnail invalidation and update strategy is missing
-
-What happens when a thumbnail container needs to change? A new photo is added to a partition, a photo is deleted, or thumbnails need re-encoding. Rebuilding a 120 MB `previews.avif` for one new photo seems expensive. There's no incremental update or append strategy described.
 
 ## 7. No search or query language specification
 
@@ -26,4 +18,4 @@ Agents are "self-contained and idempotent" and Woof "monitors progress" — but 
 
 ---
 
-**Most critical gap**: deletion model (#2) — this is a core user operation with no coverage in the current design.
+**Remaining items**: offline story (#4), query language (#7), and agent observability (#9).

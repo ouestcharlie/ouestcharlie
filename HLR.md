@@ -13,6 +13,8 @@ Stateless compute (agent model): Compute is decoupled from storage. Agents are i
 
 Immutable photos: Photo files are never modified after ingestion. Embedded EXIF data is treated as read-only input — it is extracted into sidecar metadata but never written back to the image. This eliminates corruption risk and makes photos safe to replicate or deduplicate.
 
+No edit or delete: OuEstCharlie does not provide photo editing, renaming, moving, or deleting operations. Photo management happens through external tools or the filesystem directly. OuEstCharlie detects external changes (additions, deletions, metadata edits) and keeps its metadata in sync.
+
 Content-based identity: Each photo is identified by a SHA-256 hash of its original file content, stored in the XMP sidecar at ingestion. This hash is the universal photo ID — it is stable (photos are immutable), backend-independent, and enables cross-backend deduplication without coordination.
 
 Open standards and royalty-free formats: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
