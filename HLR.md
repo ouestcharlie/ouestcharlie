@@ -17,6 +17,8 @@ Content-based identity: Each photo is identified by a SHA-256 hash of its origin
 
 Open standards and royalty-free formats: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
 
+XMP sidecar as single source of truth: The XMP sidecar is the authoritative record for all per-photo metadata — extracted EXIF, enrichments (faces, tags, descriptions), and album membership. This ensures **metadata ownership** stays with the user: XMP is an ISO standard (ISO 16684) readable by Lightroom, darktable, ExifTool, and any XMP-compatible tool. If the user abandons OuEstCharlie, their metadata remains fully accessible. It also enables **interoperability**: external tools can read and write the same sidecars, and OuEstCharlie honors existing XMP produced by other applications.
+
 Two operating modes (index and ingest): The system supports two ways of onboarding photos. **Index mode** scans an existing photo library in place — no files are moved, the user's original folder structure is preserved, and existing XMP sidecars (from Lightroom, darktable, ExifTool, etc.) are read and honored rather than overwritten. **Ingest mode** receives new photos (mobile backup, bulk import) and places them into an optimized date-based folder structure controlled by the system.
 
 Date-based partitioning: In ingest mode, photos are organized by capture date (`YYYY/YYYY-MM/`) as the primary partitioning dimension. Date is chosen because it is the most common query filter, produces naturally balanced partitions, and aligns the physical storage layout with the manifest pruning tree for efficient queries.

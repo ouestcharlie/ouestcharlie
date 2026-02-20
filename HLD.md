@@ -66,7 +66,7 @@ EXIF data embedded in images (date, GPS, camera, orientation, etc.) is treated a
 2. **Enrichment**: Agents add new metadata (faces, descriptions, scene tags) to the XMP sidecar. The image file is read for pixel analysis but never written to.
 3. **Consolidation**: Manifests aggregate XMP sidecars, never EXIF directly.
 
-The XMP sidecar is the **single source of truth** for all queryable metadata. Agents and consumers never need to parse EXIF from images — they only read XMP and manifests.
+The XMP sidecar is the **single source of truth** for all queryable metadata (see HLR: XMP sidecar as single source of truth). Agents and consumers never need to parse EXIF from images — they only read XMP and manifests.
 
 See [HLD_rationale.md § EXIF](HLD_rationale.md#exif-and-the-metadata-pipeline) for why this approach was chosen.
 
