@@ -129,7 +129,7 @@ See High-Level Design
 See [ouestcharlie-py-toolkit/SKELETON_COMPLETE.md](../ouestcharlie-py-toolkit/SKELETON_COMPLETE.md) for details.
 
 ### 📋 Next Steps
-1. Implement Python toolkit stubs (XMP parsing, EXIF extraction, bloom filters)
+1. Implement Python toolkit stubs (XMP parsing, EXIF extraction)
 2. Build first agent (Whitebeard: housekeeping for local filesystem)
 3. Build Woof controller (localhost web app)
 4. Integrate agent ↔ Woof via MCP
@@ -138,7 +138,7 @@ See [ouestcharlie-py-toolkit/SKELETON_COMPLETE.md](../ouestcharlie-py-toolkit/SK
 
 ## License
 
-TBD
+MIT license
 
 ---
 
