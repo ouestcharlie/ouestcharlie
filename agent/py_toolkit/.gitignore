@@ -130,7 +130,3 @@ dmypy.json
 
 # macOS
 .DS_Store
-
-# Test files
-test_imports.py
-test_structure.py

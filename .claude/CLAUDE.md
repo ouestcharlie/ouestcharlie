@@ -41,6 +41,7 @@ Before making changes, ALWAYS:
 - **Update docs when design changes**: If you modify architecture, update corresponding HLD/LLD
 - **Use established patterns**: Follow the existing LLR/LLD/rationale structure
 - **Mark open questions**: Add to [OpenPoints.md](../OpenPoints.md) if uncertain
+- **Avoid listing individual code files**: Don't enumerate specific implementation files in documentation - it's not maintainable. Instead, describe patterns, directories, or link to generated documentation
 
 ## Testing & Validation
 
