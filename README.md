@@ -9,10 +9,20 @@ OuEstCharlie is designed around three core principles:
 - **Storage-agnostic** — works with local drives, S3, GCS, Azure Data Lake Storage Gen2, OneDrive, Kdrive
 - **Stateless, distributed agents** — coordinated by a central controller (Woof) using the Model Context Protocol
 
-## Project Structure
+## Repository Layout
+
+This project is split across three repositories:
+
+| Repository | Purpose |
+|------------|---------|
+| **ouestcharlie** *(this repo)* | Architecture docs, HLR/HLD, MCP interface, project charter |
+| [ouestcharlie-woof](../ouestcharlie-woof) | Woof controller — LLR, LLD, rationale |
+| [ouestcharlie-py-toolkit](../ouestcharlie-py-toolkit) | Python toolkit for building agents |
+
+### This repository
 
 ```
-ouestcharly/
+ouestcharlie/
 ├── HLR.md                          # High-Level Requirements
 ├── HLD.md                          # High-Level Design (comprehensive)
 ├── HLD_rationale.md                # Design decision rationale & deep dives
@@ -23,10 +33,8 @@ ouestcharly/
 ├── project/
 │   └── Version1_vision.md          # V1 charter, scope, decisions, risks
 │
-├── woof/                           # UI and Controller (Woof) design
-│
-└── agent/                          # Agent implementations
-
+└── agent/
+    └── agent_LLD_rationale.md      # Technology selection (Python + Rust)
 ```
 
 ## Architecture
@@ -38,10 +46,10 @@ Woof is the central coordinator running on the user's device. It serves two role
 1. **UI backend** — serves the photo browsing experience (web, mobile, desktop)
 2. **MCP client** — orchestrates agents via the Model Context Protocol
 
-**Documentation:**
-- [woof/woof_LLR.md](woof/woof_LLR.md) — Requirements
-- [woof/woof_LLD.md](woof/woof_LLD.md) — Design
-- [woof/woof_LLD_rationale.md](woof/woof_LLD_rationale.md) — Rationale
+**Documentation** (in [ouestcharlie-woof](../ouestcharlie-woof)):
+- [woof_LLR.md](../ouestcharlie-woof/woof_LLR.md) — Requirements
+- [woof_LLD.md](../ouestcharlie-woof/woof_LLD.md) — Design
+- [woof_LLD_rationale.md](../ouestcharlie-woof/woof_LLD_rationale.md) — Rationale
 
 ### Agents
 
@@ -55,9 +63,10 @@ Agents communicate with Woof via MCP (stdio or HTTP transport).
 
 **Documentation:**
 - [agent/agent_LLD_rationale.md](agent/agent_LLD_rationale.md) — Technology selection (Python + Rust)
-- [agent/py_toolkit/py_toolkit_LLD.md](agent/py_toolkit/py_toolkit_LLD.md) — Python toolkit design
-- [agent/py_toolkit/README.md](agent/py_toolkit/README.md) — Toolkit usage guide
 - [controller_api.json](controller_api.json) — MCP tool schemas
+
+**Python toolkit** (in [ouestcharlie-py-toolkit](../ouestcharlie-py-toolkit)):
+- [README.md](../ouestcharlie-py-toolkit/README.md) — Toolkit usage guide
 
 ### Data Model
 
@@ -77,8 +86,8 @@ See High-Level Design
 
 | Component | Requirements | Design | Rationale |
 |-----------|-------------|--------|-----------|
-| **Woof** | [woof_LLR.md](woof/woof_LLR.md) | [woof_LLD.md](woof/woof_LLD.md) | [woof_LLD_rationale.md](woof/woof_LLD_rationale.md) |
-| **Agents** | — | [py_toolkit_LLD.md](agent/py_toolkit/py_toolkit_LLD.md) | [agent_LLD_rationale.md](agent/agent_LLD_rationale.md) |
+| **Woof** | [woof_LLR.md](../ouestcharlie-woof/woof_LLR.md) | [woof_LLD.md](../ouestcharlie-woof/woof_LLD.md) | [woof_LLD_rationale.md](../ouestcharlie-woof/woof_LLD_rationale.md) |
+| **Agents** | — | [ouestcharlie-py-toolkit](../ouestcharlie-py-toolkit) | [agent_LLD_rationale.md](agent/agent_LLD_rationale.md) |
 
 ## Project execution
 
@@ -117,7 +126,7 @@ See High-Level Design
 - AgentBase wrapping FastMCP
 - Stubs documented for XMP parsing, EXIF extraction, bloom filters
 
-See [agent/py_toolkit/SKELETON_COMPLETE.md](agent/py_toolkit/SKELETON_COMPLETE.md) for details.
+See [ouestcharlie-py-toolkit/SKELETON_COMPLETE.md](../ouestcharlie-py-toolkit/SKELETON_COMPLETE.md) for details.
 
 ### 📋 Next Steps
 1. Implement Python toolkit stubs (XMP parsing, EXIF extraction, bloom filters)

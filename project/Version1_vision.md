@@ -5,7 +5,7 @@
 Functional goals:
 - Index pictures on local drive (MacOs)
     - Create corresponding agent (Whitebeard)
-    - Create XMP including ouestcharly: specific fields (picture identity hash...)
+    - Create XMP including ouestcharlie: specific fields (picture identity hash...)
     - Create manifests (leaf)
     - Create thumbnails and previews
 - Search pictures based on simple predicates (e.g. date)
