@@ -37,9 +37,10 @@ Out of scope:
 - No ingest mode (index only)
 - No change detection / re-indexing
 - No multi-device
+- No bloom filters
 
 ## Decisions
-- **Woof**: Tauri (Rust backend + web frontend). V1 can start as a localhost web app, then wrap in Tauri — zero throwaway work. See [woof/woof_LLD_rationale.md](../woof/woof_LLD_rationale.md).
+- **Woof**: Local MCP server + Claude Desktop as UI shell. Woof runs as a background daemon and exposes OuEstCharlie capabilities as MCP tools. The gallery is served as an MCP App (interactive iframe inside Claude Desktop's conversation). No standalone desktop app to build for V1. See [woof_LLD_rationale.md](../ouestcharlie-woof/woof_LLD_rationale.md) for the decision analysis; the Tauri alternative is preserved there for reference.
 - **Agents**: Python + Rust AVIF helper. Official MCP Python SDK, rich image ecosystem (Pillow, rawpy, pyexiv2). Rust CLI tool for AVIF grid container assembly. See [agent/agent_LLD_rationale.md](../agent/agent_LLD_rationale.md).
 
 ## Open points

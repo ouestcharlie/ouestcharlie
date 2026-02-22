@@ -7,7 +7,7 @@ Storage-agnostic: Supports local drive on laptop or mobile, and commodity object
 
 No central database: Metadata lives alongside data in a hierarchical folder structure, similar to how Iceberg/Delta store manifest files within the data lake itself. This is a strong decoupling choice — the system is self-describing.
 
-Woof as central controller: Woof is the user-facing application and the central contact point for agents — analogous to an Iceberg catalog. It owns the device-local configuration, manages credentials, and orchestrates agent execution. All user interaction flows through Woof.
+Woof as agent mediator: Woof is the single MCP server through which Claude Desktop orchestrates all OuEstCharlie operations. Claude Desktop provides the conversational user interface and acts as the orchestration intelligence; Woof is the security and operational boundary between Claude and the OuEstCharlie agent ecosystem. Woof owns the device-local configuration, manages credentials, controls agent lifecycle, and manages background daemons. All Claude interactions with OuEstCharlie flow through Woof's MCP interface. Claude has no direct access to agents, storage, or credentials — everything is mediated by Woof.
 
 Stateless compute (agent model): Compute is decoupled from storage. Agents are independent workers that register with Woof, declare the scope they require, and receive user-approved scoped credentials. They read/write to the shared storage layer but never hold long-lived secrets or communicate with each other directly. This enables horizontal scaling and flexibility.
 

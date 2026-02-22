@@ -1,27 +1,54 @@
 # High Level Design
 
 Key design decisions:
-- **Woof as a central coordinator**: Woof is the central actor in OuEstCharlie. It is the only component that interacts directly with the user and the only component that orchestrates agents. All other components (housekeeping, enrichment, consumption agents) are headless workers that Woof triggers and supervises
+- **Woof as agent mediator**: Woof is the single MCP server that Claude Desktop connects to. It is the security and operational boundary between Claude and the OuEstCharlie agent ecosystem. Claude Desktop provides the user interface and orchestration intelligence; Woof enforces access control, manages credentials, controls agent lifecycle, and serves gallery UI via MCP Apps. All Claude tool calls targeting OuEstCharlie flow through Woof — agents, storage, and credentials are never exposed to Claude directly.
 - **Each backend is independent**: every backend has its own root manifest and its own metadata tree. There is no cross-backend unified namespace — each is a self-contained photo collection.
 - **No shared catalog service**: the config file is local to the device. Two devices accessing the same S3 bucket each have their own config pointing to it. The bucket itself is the source of truth (via its root manifest), not the config.
 - **Convention-based root manifest**: within each backend, the root manifest is always at a well-known path (e.g., `/.ouestcharlie/root-manifest.json`). Agents don't need the config to tell them where the manifest is — they just need the backend connection info.
 - **Agent discovery**: when Woof launches an agent, it provides the agent with the backend connection info and a scoped credential. The agent connects to its assigned backend(s), reads the root manifest to understand the current state, and navigates the hierarchical manifest tree from there.
 
-## Woof: User-Facing Application and Controller
+## Woof: MCP Server and Agent Mediator
+
+Woof runs as a local MCP server on the user's device. Claude Desktop connects to it as an MCP client. From Claude's perspective, Woof exposes the entire OuEstCharlie capability surface as MCP tools. Woof is the only component Claude interacts with — agents, storage, and credentials are invisible to Claude.
+
+```
+Claude Desktop (MCP client)
+  └── Woof MCP server (single entry point)
+        ├── MCP tools: search, browse, index, enrich, status, configure
+        ├── MCP App: gallery iframe (React/Svelte, rendered in Claude Desktop)
+        ├── Local HTTP server: thumbnails and previews (served to gallery iframe)
+        ├── Credential vault (OS keychain)
+        ├── Configuration (~/.ouestcharlie/)
+        ├── Agent lifecycle: launch, monitor, cancel, chain
+        └── Background daemons: scheduled tasks, change detection, housekeeping
+              ├── Whitebeard (indexing agent — MCP server, child process)
+              └── [future enrichment agents]
+```
 
 ### Responsibilities
 
-**User interaction**: Woof is the UI layer — it presents the photo library to the user (browse, search, filter, albums) and receives user actions (import photos, create albums, trigger enrichment). All user-facing surfaces (web, mobile, desktop) are Woof interfaces.
+**MCP interface to Claude**: Woof exposes OuEstCharlie operations as MCP tools. Claude calls these tools in response to user requests ("index my photos", "show me photos from last July", "what's the indexing status?"). Woof translates Claude's tool calls into agent invocations or direct operations.
 
-**Agent orchestration**: Woof decides which agents run, when, and against which backends. It handles the lifecycle management:
+**Gallery UI (MCP App)**: Woof serves an interactive gallery as an MCP App — an HTML/JS application rendered inside Claude Desktop's conversation via a sandboxed iframe. The gallery calls back to Woof tools for search, browsing, and navigation. This gives Claude Desktop a rich visual interface for photo browsing without requiring a separate application. See [woof/woof_LLD_rationale.md](woof/woof_LLD_rationale.md) for the MCP Apps analysis.
 
-- **Trigger**: Woof starts agents in response to user actions (e.g., user imports photos → Woof triggers ingestion agent, then housekeeping for thumbnails and manifest rebuild) or on a schedule (e.g., nightly enrichment pass).
+**Local thumbnail server**: Woof runs a local HTTP server (loopback only) that serves thumbnail and preview AVIF containers to the gallery iframe. Thumbnails never leave the device — they are not sent through Claude's API. The gallery iframe's Content Security Policy is configured to allow fetching from this local origin only.
+
+**Agent orchestration**: Woof decides which agents run, when, and against which backends. It handles the full lifecycle:
+
+- **Trigger**: Woof starts agents in response to Claude tool calls (e.g., Claude calls `index_backend` → Woof triggers Whitebeard, then housekeeping for thumbnails and manifest rebuild) or on a schedule (e.g., nightly enrichment pass).
 - **Scope assignment**: Before launching an agent, Woof assigns it a scope — which backend(s), which folder subtrees, and which operations (read/write on photos, metadata, manifests, thumbnails).
-- **Lifecycle**: Woof monitors agent progress and handles completion, failure, and cancellation.
+- **Lifecycle**: Woof monitors agent progress via MCP progress notifications and handles completion, failure, and cancellation.
+- **Chaining**: Woof sequences dependent agent executions (ingestion → housekeeping → enrichment). Agents never communicate with each other directly.
+
+**Background daemon management**: Woof manages long-running background operations that must continue independently of whether Claude Desktop is open:
+
+- **Change detection**: OS file watching (FSEvents on macOS) triggers housekeeping when external tools modify the photo library.
+- **Scheduled tasks**: Nightly enrichment passes, periodic manifest consistency checks.
+- **Daemon lifecycle**: Woof starts as a background process at login and manages agent child processes. Claude Desktop connects to the already-running Woof instance.
 
 **Authentication and credential management**: Woof owns the credential vault and is the sole component that handles long-lived secrets:
 
-- **Long-lived credentials**: Master credentials (S3 IAM keys, OAuth refresh tokens, service account keys) are stored in the OS keychain, managed exclusively by Woof. No agent ever sees these.
+- **Long-lived credentials**: Master credentials (S3 IAM keys, OAuth refresh tokens, service account keys) are stored in the OS keychain, managed exclusively by Woof. Neither Claude nor agents ever see these.
 - **Scoped short-lived tokens**: When Woof launches an agent, it mints a short-lived, narrowly scoped token derived from the master credential (see Security and Access Control for per-backend mechanisms). The agent receives only this scoped token.
 - **Token lifecycle**: Tokens are scoped to the agent's assigned task and expire automatically. Woof can revoke tokens early if an agent is cancelled.
 
@@ -37,11 +64,11 @@ Woof is the **control plane** — it decides what happens. Agents are the **data
 
 - Agents remain stateless and idempotent: they receive a scope and a task, execute it, and terminate.
 - Woof holds all state that spans agent executions: configuration, album definitions, credentials, and orchestration history.
-- To be confirmed: Agents never communicate with each other directly. If one agent's output is another's input (e.g., ingestion → housekeeping → enrichment), Woof chains the executions.
+- Agents never communicate with each other directly. If one agent's output is another's input (e.g., ingestion → housekeeping → enrichment), Woof chains the executions.
 
 ### Root Configuration (lightweight catalog)
 
-Iceberg requires a catalog service to locate tables. In OuEstCharlie, **Woof fills this role**: it is the central contact point that agents use to discover storage backends, obtain scoped credentials, and locate root manifests. However, unlike a shared catalog service, Woof runs on each device and relies on a **local configuration file** — preserving the "no central database" principle.
+Iceberg requires a catalog service to locate tables. In OuEstCharlie, **Woof fills this role**: it is the central contact point that agents use to discover storage backends, obtain scoped credentials, and locate root manifests. Unlike a shared catalog service, Woof runs on each device and relies on a **local configuration file** — preserving the "no central database" principle. Claude Desktop connects to Woof; Woof connects to agents and storage. This layered topology keeps the device-local configuration entirely inside Woof's trust boundary.
 
 The configuration is owned by Woof and lives on each device:
 
