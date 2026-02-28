@@ -21,3 +21,26 @@ The current `Photo.extract_exif()` implementation has two inefficiencies worth r
 **Temp copy on local disk.** pyexiv2 requires a file path — it cannot parse EXIF from an in-memory buffer.  The current code writes the entire image to a `tempfile.mkstemp` file on the local filesystem before calling `pyexiv2.Image(tmp_path)`, then deletes it.  For cloud-backed photos this means downloading the full file and writing it to local disk even when the goal is only to read metadata.  Options worth evaluating: (a) expose a streaming / partial-read path in the backend and write only the first N bytes to the temp file (sufficient for EXIF), (b) switch to a library that accepts in-memory buffers (e.g. `exifread`, `pillow`, or the pyexiv2 `ImageData` API if available), or (c) keep the current approach but bound temp file size when only EXIF is needed.
 
 
+## 9. Tile cache creates small-file explosion and doubles metadata storage
+
+The current thumbnail pipeline caches intermediate JPEG tiles under `.ouestcharlie/tile_cache/` before assembling them into AVIF grids. Two problems:
+
+**Small-file explosion on object stores.** For N photos × 2 tiers, the cache adds 2N individual backend objects. Object stores (S3, kDrive, OneDrive) bill per-request and impose per-object overhead, making this expensive at scale.
+
+**Doubled metadata storage.** JPEG tiles at 95% quality are close in size to the originals' thumbnail resolution, roughly doubling the storage footprint of the `.ouestcharlie/` directory.
+
+**Possible solution.** Decode and resize tiles in memory, pipe them directly to the avif-grid subprocess via a local temp directory that is deleted after encoding. No tile files would be persisted to the backend; `.ouestcharlie/` would contain only `manifest.json`, `thumbnails.avif`, and `previews.avif`. The trade-off is that every AVIF rebuild re-decodes all photos (no incremental update), which is acceptable given that rebuilds are triggered by content changes.
+
+## 10. Full-file SHA-256 is expensive as a photo identity fingerprint
+
+`content_hash` is currently computed by hashing the entire file with SHA-256.  For large RAW or HEIC files (20–100 MB) on a cloud backend, this means downloading the full file on every first encounter or forced re-index.  The hash is stored in the XMP sidecar after the first run, so the cost is paid once — but it is significant for initial ingestion of large libraries or when detecting changes.
+
+**The core tension:** full-file hash is change-detecting (any byte change produces a different hash) but expensive.  Cheaper alternatives trade some of that robustness:
+
+**Partial file hash — start + end + size.** SHA-256 of `first 64 KB + last 4 KB + file_size`.  Requires only two small reads regardless of file size.  Distinct photos will virtually never collide.  However it is sensitive to EXIF/XMP edits that touch the file header — a metadata-only edit would produce a different hash, which may or may not be desirable.
+
+**Image-data-only hash for JPEG.** Parse JPEG markers, skip all APP segments (EXIF, XMP, ICC profile — all at the start of the file), then SHA-256 only the compressed scan stream.  This is metadata-edit-resistant: rating or tagging a photo does not change its `content_hash`.  Downside: still requires reading most of the file (scan data is typically 90–95% of JPEG size), and requires per-format parsing logic.
+
+**Cloud ETag as the change signal.** Object stores (S3, kDrive) expose an ETag per object that changes when the object is replaced.  The backend could expose this as the version token and use it to skip re-hashing when the ETag is unchanged since the last indexing run.  Full-file hash would then only be computed on first encounter or when the ETag changes.  Limitation: local filesystem has no equivalent (mtime is unreliable across copies).
+
+**Recommended direction.** The ETag/version-token approach is the most architecture-consistent: backends already return a `VersionToken` from `list_files`, and the XMP sidecar already stores `xmp_version_token`.  Extending this to skip re-hashing when the token is unchanged would be low-risk and high-impact for cloud backends, without changing the identity semantics.
