@@ -299,7 +299,22 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 └── ...
 ```
 
-The manifest records the grid layout for each tier (tile order mapping to photo files, grid dimensions, resolution) so consumption agents can request specific tiles by index.
+The manifest records the grid layout for each tier so consumption agents can request specific tiles by index. Each tier is represented as a `ThumbnailGridLayout` object in the leaf manifest:
+
+```json
+"thumbnailGrid": {
+  "cols": 32,
+  "rows": 4,
+  "tileSize": 256,
+  "photoOrder": ["sha256:a1b2...", "sha256:c3d4...", ...]
+}
+```
+
+- **`cols` / `rows`**: grid dimensions (determined by `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`)
+- **`tileSize`**: short-edge pixel size for this tier (256 for thumbnails, 1440 for previews)
+- **`photoOrder`**: content hashes of photos in row-major tile order, **sorted ascending by `content_hash`**
+
+Ordering tiles by `content_hash` rather than filename ensures stable tile indices: a photo's position only changes when its content changes, not when it is renamed or when other photos are added or removed.
 
 ### Access strategy
 
