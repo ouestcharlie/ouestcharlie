@@ -214,6 +214,107 @@
         }
       ]
     },
+    "consumption": {
+      "serverInfo": {
+        "name": "ouestcharlie-wally",
+        "version": "0.1.0"
+      },
+      "capabilities": {
+        "tools": {},
+        "logging": {}
+      },
+      "tools": [
+        {
+          "name": "search_photos_tool",
+          "description": "Search the photo library by traversing the manifest tree. Uses two-level pruning: parent summary stats prune subtrees, surviving leaf manifests are scanned per-photo. Returns matching photo metadata with thumbnail tile indices. Never reads XMP sidecars.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "date_min": {
+                "type": "string",
+                "description": "Inclusive lower bound on date_taken. Partial dates accepted: '2024', '2024-07', '2024-07-14'."
+              },
+              "date_max": {
+                "type": "string",
+                "description": "Inclusive upper bound on date_taken (same partial date formats)."
+              },
+              "tags": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "All listed tags must be present (AND semantics). Matches dc:subject values."
+              },
+              "rating_min": {
+                "type": "integer",
+                "description": "Minimum xmp:Rating (0=unrated, 1–5=stars, -1=rejected)."
+              },
+              "rating_max": {
+                "type": "integer",
+                "description": "Maximum xmp:Rating."
+              },
+              "make": {
+                "type": "string",
+                "description": "Case-insensitive substring match on tiff:Make (camera manufacturer)."
+              },
+              "model": {
+                "type": "string",
+                "description": "Case-insensitive substring match on tiff:Model (camera model)."
+              },
+              "root": {
+                "type": "string",
+                "default": "",
+                "description": "Subtree to search, relative to the backend root. Default '' = entire library."
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["matches", "partitionsScanned", "partitionsPruned", "errors", "errorDetails"],
+            "properties": {
+              "matches": {
+                "type": "array",
+                "description": "Matching photo records.",
+                "items": {
+                  "type": "object",
+                  "required": ["partition", "filename", "contentHash", "filePath"],
+                  "properties": {
+                    "partition": { "type": "string" },
+                    "filename": { "type": "string" },
+                    "contentHash": { "type": "string", "examples": ["sha256:a1b2c3..."] },
+                    "filePath": { "type": "string", "description": "Relative path from backend root for opening on filesystem." },
+                    "dateTaken": { "type": "string", "description": "ISO 8601 datetime." },
+                    "rating": { "type": "integer" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "tileIndex": { "type": "integer", "description": "Position in thumbnail_grid.photo_order." },
+                    "thumbnailsPath": { "type": "string", "description": "Relative path to thumbnails.avif." },
+                    "previewsPath": { "type": "string", "description": "Relative path to previews.avif." }
+                  }
+                }
+              },
+              "partitionsScanned": {
+                "type": "integer",
+                "description": "Number of leaf manifests fully evaluated."
+              },
+              "partitionsPruned": {
+                "type": "integer",
+                "description": "Number of subtrees skipped by summary pruning."
+              },
+              "errors": {
+                "type": "integer",
+                "description": "Count of manifest read failures."
+              },
+              "errorDetails": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "annotations": {
+            "title": "Search Photos",
+            "readOnlyHint": true
+          }
+        }
+      ]
+    },
     "ingestion": {
       "serverInfo": {
         "name": "ouestcharlie-ingestion",

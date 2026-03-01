@@ -279,13 +279,9 @@ Tile index for a photo = position of its `content_hash` in `photoOrder`.
 
 No grammar defined. Need to specify: syntax, operators, indexed fields, and how Woof serializes predicates for agent calls. V1 minimum: date-only structured predicate. Full DSL can come later.
 
-### OP-Q2: Agent tool interface for Wally
+### OP-Q2: Agent tool interface for Wally ✅ resolved
 
-The `controller_api.json` is incomplete for Wally. Need to define:
-- MCP tool name(s) (e.g., `search_photos`, `browse_partition`)
-- Input schema: predicate format, backend(s) to search, pagination
-- Output schema: photo list with manifest-sourced metadata, partition references, thumbnail tile indices
-- Progress reporting: how Wally reports partial results as it scans partitions
+Tool interface defined and implemented. See [wally_LLD.md](../ouestcharlie-wally/wally_LLD.md) for the full design and [controller_api.json](controller_api.json) for the schema. Wally exposes one tool (`search_photos_tool`) accepting structured predicate fields; Woof passes these directly (no DSL parsing in Wally). Progress is reported via `ctx.report_progress` after each leaf manifest scanned.
 
 ### OP-Q3: Result ordering and pagination
 
