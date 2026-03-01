@@ -44,3 +44,16 @@ The current thumbnail pipeline caches intermediate JPEG tiles under `.ouestcharl
 **Cloud ETag as the change signal.** Object stores (S3, kDrive) expose an ETag per object that changes when the object is replaced.  The backend could expose this as the version token and use it to skip re-hashing when the ETag is unchanged since the last indexing run.  Full-file hash would then only be computed on first encounter or when the ETag changes.  Limitation: local filesystem has no equivalent (mtime is unreliable across copies).
 
 **Recommended direction.** The ETag/version-token approach is the most architecture-consistent: backends already return a `VersionToken` from `list_files`, and the XMP sidecar already stores `xmp_version_token`.  Extending this to skip re-hashing when the token is unchanged would be low-risk and high-impact for cloud backends, without changing the identity semantics.
+
+
+## 11. Woof V1 runs as a stdio MCP server — no background daemon
+
+For V1, Woof is launched on demand by Claude Desktop as a stdio MCP server process. It exits when Claude Desktop closes. This is sufficient for the V1 scope (manual indexing, search) but will need to change when the following features are added:
+
+- **Change detection**: FSEvents file watching must survive Claude Desktop being closed
+- **Scheduled enrichment**: housekeeping and enrichment passes should run on a schedule, independently of the UI
+- **Agent executions outlasting a session**: long indexing runs should not be interrupted by the user closing Claude Desktop
+
+**V2 path**: Deploy Woof as a launchd agent on macOS (and equivalent on other platforms). Claude Desktop connects to the already-running instance via the MCP transport declared in the Desktop Extension manifest. The dirty partition queue and activity log (already designed in the LLD) become meaningful only once the daemon model is active.
+
+**V1 constraint accepted**: the dirty partition queue and any background scheduling logic in the LLD are not implemented for V1.
