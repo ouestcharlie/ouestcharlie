@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(uv venv:*)",
-      "Bash(.venv/bin/python -m pytest:*)"
+      "Bash(.venv/bin/python -m pytest:*)",
+      "WebFetch(domain:modelcontextprotocol.github.io)"
     ]
   }
 }
