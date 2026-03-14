@@ -4,14 +4,18 @@
 
 Functional goals:
 - Index pictures on local drive (MacOs)
-    - Create corresponding agent (Whitebeard)
-    - Create XMP including ouestcharlie: specific fields (picture identity hash...)
-    - Create manifests (leaf)
-    - Create thumbnails and previews
+    - [x] Create corresponding agent (Whitebeard)
+    - [x] Create XMP including ouestcharlie: specific fields (picture identity hash...)
+    - [x] Create manifests (leaf)
+    - [x] Create thumbnails and previews
 - Search pictures based on simple predicates (e.g. date)
-    - Create corresponding consumption agent (Wally)
+    - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
-    - Open picture using file system
+    - [x] Open picture using file system
+- Controler agent and App (Woof)
+    - [x] MCP Server as main entry point
+    - [x] MCP client and manager of Wally and Whitebeard
+    - [x] MCP App with HTML/JS forms to display the gallery and preview
 - Support for modern image formats (JPEG, HEIC, RAW, PNG)
 
 
