@@ -98,15 +98,15 @@ See High-Level Design
 ## Technology Stack
 
 ### Woof (Controller)
-- **Tauri** (Rust backend + web frontend)
-- V1: localhost web app, wrap in Tauri later
+- **Python** server (MCP + HTTP)
+- **Svelte** frontend
 
 ### Agents
-- **Python** — official MCP SDK, rich image ecosystem (Pillow, rawpy, pyexiv2)
+- **Python** — official MCP/FastMCP SDK, rich image ecosystem (Pillow, rawpy, pyexiv2)
 - **Rust CLI helper** — `ouestcharlie-avif-grid` for AVIF grid container assembly
 
 ### Protocols & Standards
-- **MCP** (Model Context Protocol) — agent ↔ Woof communication
+- **MCP** (Model Context Protocol) — agent ↔ Woof communication, Woof MCP App
 - **XMP** (ISO 16684) — metadata storage
 - **AVIF** — thumbnail containers (AV1-based, royalty-free)
 
@@ -119,22 +119,28 @@ See High-Level Design
 - MCP tool definitions specified ([controller_api.json](controller_api.json))
 - Version 1 vision & charter defined
 
-### ✅ Python Toolkit Skeleton Complete
+### ✅ Implementation of the toolkit and agents
 - Package structure, data models, protocols defined
 - Local filesystem backend implemented
-- ManifestStore and XmpStore with optimistic concurrency
-- AgentBase wrapping FastMCP
-- Stubs documented for XMP parsing, EXIF extraction, bloom filters
+- ManifestStore and XmpStore
+- First version of indexer (Wally) and searcher (Wally)
+- First version of the controller and interface (Woof)
 
-See [ouestcharlie-py-toolkit/SKELETON_COMPLETE.md](../ouestcharlie-py-toolkit/SKELETON_COMPLETE.md) for details.
 
 ### 📋 Next Steps
-1. Implement Python toolkit stubs (XMP parsing, EXIF extraction)
-2. Build first agent (Whitebeard: housekeeping for local filesystem)
-3. Build Woof controller (localhost web app)
-4. Integrate agent ↔ Woof via MCP
-5. Performance testing with 10K photos
+- Refine search DSL or use existing standard
+- Indexing and search optimizations
+- Packaging
 
+## Context
+
+| Repository | Purpose |
+|------------|---------|
+| [**ouestcharlie** *This repo*](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs, HLR/HLD, MCP interface |
+| [ouestcharlie-woof**](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller |
+| [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit) | Python toolkit for agents |
+| [ouestcharlie-whitebeard](https://github.com/ouestcharlie/ouestcharlie-whitebeard) | Indexing agent |
+| [ouestcharlie-wally](https://github.com/ouestcharlie/ouestcharlie-wally) | Search/consumption agent |
 
 ## License
 
