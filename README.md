@@ -86,8 +86,9 @@ See High-Level Design
 
 | Component | Requirements | Design | Rationale |
 |-----------|-------------|--------|-----------|
-| **Woof** | [woof_LLR.md](../ouestcharlie-woof/woof_LLR.md) | [woof_LLD.md](../ouestcharlie-woof/woof_LLD.md) | [woof_LLD_rationale.md](../ouestcharlie-woof/woof_LLD_rationale.md) |
-| **Agents** | — | [ouestcharlie-py-toolkit](../ouestcharlie-py-toolkit) | [agent_LLD_rationale.md](agent/agent_LLD_rationale.md) |
+| **Woof** | [woof_LLR.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/woof_LLR.md) | [woof_LLD.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/woof_LLD.md) | [woof_LLD_rationale.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/woof_LLD_rationale.md) |
+| **Agents general** | — | - | [agent_LLD_rationale.md](agent/agent_LLD_rationale.md) |
+| **Agent toolkit** | | [py_toolkit_LLD.md](https://github.com/ouestcharlie/ouestcharlie-py-toolkit/blob/master/py_toolkit_LLD.md) |
 
 ## Project execution
 
@@ -137,7 +138,7 @@ See High-Level Design
 | Repository | Purpose |
 |------------|---------|
 | [**ouestcharlie** *This repo*](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs, HLR/HLD, MCP interface |
-| [ouestcharlie-woof**](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller |
+| [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller |
 | [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit) | Python toolkit for agents |
 | [ouestcharlie-whitebeard](https://github.com/ouestcharlie/ouestcharlie-whitebeard) | Indexing agent |
 | [ouestcharlie-wally](https://github.com/ouestcharlie/ouestcharlie-wally) | Search/consumption agent |
