@@ -33,6 +33,9 @@ Before making changes, ALWAYS:
 - Implement optimistic concurrency for manifest/XMP writes
 - Check [py_toolkit_LLD.md](../agent/py_toolkit/py_toolkit_LLD.md) for design patterns
 
+### JavaScript / Frontend
+- **No inline JS**: Never use inline `<script>` tags or `onclick`/`onX` attributes in HTML. All JavaScript must live in separate `.js` files and be referenced via `<script src="...">`.
+
 ### Rust (CLI helpers)
 - Used only for performance-critical operations (e.g., AVIF grid assembly)
 - Keep CLI interface minimal and well-documented
