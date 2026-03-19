@@ -103,18 +103,16 @@ OuEstCharlie supports **index mode** (preserve existing structure) and **ingest 
 
 ### Index mode: original structure preserved
 
-When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/` metadata directories without moving any files. The user's folder hierarchy becomes the manifest tree:
+When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/` metadata directories without moving any files. Any folder that directly contains photos gets a `manifest.json`; a single `summary.json` at the backend root lists all indexed partitions:
 
 ```
 /Photos/                                    ← user's existing root
 ├── .ouestcharlie/
-│   └── manifest.json                       ← root manifest (consolidates children)
+│   └── summary.json                        ← flat index of ALL partitions (for pruning)
 ├── Vacations/
-│   ├── .ouestcharlie/
-│   │   └── manifest.json                   ← mid-level manifest (consolidates Italy + Japan)
 │   ├── Italy 2023/
 │   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json               ← leaf manifest (full XMP inline, ~350 photos)
+│   │   │   ├── manifest.json               ← partition manifest (full XMP inline, ~350 photos)
 │   │   │   └── thumbnails.avif
 │   │   ├── DSC_001.jpg
 │   │   ├── DSC_001.xmp                     ← generated at indexing (EXIF extraction)
@@ -126,16 +124,9 @@ When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/
 │       │   ├── manifest.json
 │       │   └── thumbnails.avif
 │       └── ...
-├── Family/
-│   ├── .ouestcharlie/
-│   │   └── manifest.json
-│   ├── Birthday 2024/
-│   │   └── ...
-│   └── Christmas 2023/
-│       └── ...
 └── Camera Roll/
     ├── .ouestcharlie/
-    │   ├── manifest.json                   ← leaf manifest (~2,500 photos — may be large)
+    │   ├── manifest.json                   ← partition manifest (~2,500 photos — may be large)
     │   └── thumbnails.avif
     └── ...
 ```
@@ -149,13 +140,11 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
 ```
 /photos/                                    ← backend root
 ├── .ouestcharlie/
-│   └── manifest.json                       ← root manifest
+│   └── summary.json                        ← flat index of ALL partitions
 ├── 2024/
-│   ├── .ouestcharlie/
-│   │   └── manifest.json                   ← year summary manifest
 │   ├── 2024-01/
 │   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json               ← leaf manifest (~1,000 photos)
+│   │   │   ├── manifest.json               ← partition manifest (~1,000 photos)
 │   │   │   └── thumbnails.avif
 │   │   ├── IMG_001.jpg
 │   │   ├── IMG_001.xmp
@@ -171,15 +160,14 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
     └── ...
 ```
 
-Three-level hierarchy: `root → year → month`.
+Two-level structure: `root/year/month`. Intermediate year folders do not have manifests.
 
 #### S3 and GCS (flat namespace, prefix-simulated folders)
 
 ```
 photos/                                     ← bucket prefix (not a real directory)
-├── .ouestcharlie/manifest.json              ← root manifest
-├── 2024/.ouestcharlie/manifest.json         ← year summary
-├── 2024/2024-01/.ouestcharlie/manifest.json ← leaf manifest
+├── .ouestcharlie/summary.json               ← flat index of ALL partitions
+├── 2024/2024-01/.ouestcharlie/manifest.json ← partition manifest
 ├── 2024/2024-01/.ouestcharlie/thumbnails.avif
 ├── 2024/2024-01/IMG_001.jpg
 ├── 2024/2024-01/IMG_001.xmp
@@ -209,17 +197,21 @@ Date-based partitioning targets ~1,000 photos per month. When a month exceeds th
 - **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes a leaf manifest node.
 - **S3 / GCS**: Sub-partition by ingestion batch — `2024/2024-07/batch-001/`. The batch threshold is configurable (default: 1,000 photos per batch).
 
-### Hierarchical metadata
+### Metadata files
 
-Photos are organized in folders (partitions). Each folder contains:
+Photos are organized in folders (partitions). Each folder that directly contains photos has:
 
 - **Photo files**: the original images (immutable)
-- **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) stored in standard XMP format
-- **Folder manifest**: contains the **full XMP metadata inline** for every photo in the partition, plus partition-level summary statistics (min/max dates, bloom filters, photo count, location bounding box)
+- **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) in standard XMP format
+- **`manifest.json`**: contains the **full XMP metadata inline** for every photo in the partition, plus partition-level summary statistics (min/max dates, bloom filters, photo count, location bounding box)
 
-The leaf manifest is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one manifest file per partition** instead of scanning individual XMP sidecars.
+The backend root also has:
 
-Manifests are structured hierarchically: a parent folder's manifest consolidates its children's manifests into **summary-only entries** (bloom filters, min/max stats, photo counts), forming a metadata tree that mirrors the storage hierarchy.
+- **`summary.json`**: a **flat index of all partitions** across the entire backend, each entry holding the same summary statistics as the partition's `manifest.json` summary block. Used for search pruning without reading individual manifests.
+
+The `manifest.json` is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one file per partition** instead of scanning individual XMP sidecars.
+
+The `summary.json` enables two-level pruning: reading a single small file at the backend root is enough to skip entire partitions before fetching any manifest.
 
 | Manifest level | Content | Typical size (100K library) |
 |---|---|---|
