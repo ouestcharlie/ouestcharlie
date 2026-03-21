@@ -145,6 +145,34 @@ The two-tier overhead is **~1-2% of original storage** — negligible cost for a
 - [Best Settings for AVIF Encoding](https://openaviffile.com/best-settings-for-avif-encoding/)
 - [AVIF compression explained - BulkImagePro](https://bulkimagepro.com/articles/avif-image-compression/)
 
+## Preview Format: JPEG vs AVIF
+
+### Problem
+
+Previews (1440px, per-photo files) could use either JPEG or AVIF. The choice is distinct from the grid thumbnail tier — there is no multi-image container involved, so AVIF's main structural advantage does not apply.
+
+### Format comparison
+
+| Factor | AVIF | JPEG |
+|---|---|---|
+| File size (1440px) | ~100-150 KB | ~250-500 KB |
+| Encoding speed | ~1-5 s per image | <50 ms |
+| Wide color / HDR | Yes (10-bit, Display P3) | No (8-bit sRGB) |
+| Grid container benefit | No (individual files) | No |
+| Decoding speed | Slower | Fast |
+| Pipeline complexity | Rust/libavif in request handler | Simple (Pillow/PIL) |
+
+### Why JPEG for previews
+
+Previews are generated **lazily on first request** by Wally's HTTP handler. Encoding speed is therefore user-visible: AVIF at quality 60 takes 1–5 seconds per image on a typical CPU; JPEG takes under 50 ms. The latency difference maps directly to UX — the first click on a photo would stall for multiple seconds with AVIF.
+
+The main AVIF advantage (compression) carries less weight for previews than for thumbnails:
+- Previews are served over loopback — bandwidth is not a constraint.
+- Per-file cloud egress cost (~$0.004-0.01 per preview with JPEG vs AVIF) is negligible at the expected access pattern (previews are cached on first view).
+- The grid container benefit (one HTTP request for N images) does not apply to individual per-photo files.
+
+**Decision**: previews use **JPEG**. Fast encoding keeps lazy generation invisible to the user. If previews are later moved to eager pre-generation during housekeeping (decoupling encoding latency from UX), AVIF can be reconsidered.
+
 ## Thumbnail Rebuild Strategy
 
 ### Why full rebuild instead of incremental append
