@@ -281,7 +281,8 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 ├── 2024-07/
 │   ├── .ouestcharlie/
 │   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
-│   │   ├── thumbnails.avif       ← 256px grid for gallery browsing (eager)
+│   │   ├── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif  ← 256px chunk (≤64 photos, max 8×8)
+│   │   ├── thumbnails-aB1cD2eF3gH4i5jK6lM7nO.avif  ← next chunk if partition > 64 photos
 │   │   └── previews/
 │   │       ├── Kf3QzA2_nBcR8x....jpg ← 1440px JPEG per photo (lazy, generated on demand)
 │   │       └── aB1cD2eF3gH4i5....jpg
@@ -295,28 +296,32 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 └── ...
 ```
 
-The manifest records the thumbnail grid layout so consumption agents can request specific tiles by index:
+The manifest records thumbnail chunks so consumption agents can request specific tiles by index:
 
 ```json
-"thumbnailGrid": {
-  "cols": 32,
-  "rows": 4,
-  "tileSize": 256,
-  "photoOrder": ["Kf3QzA2_nBcR8xYvLm1P9w", "aB1cD2eF3gH4i5jK6lM7nO", ...]
-}
+"thumbnailChunks": [
+  {
+    "avifHash": "Kf3QzA2_nBcR8xYvLm1P9w",
+    "grid": {
+      "cols": 8, "rows": 8, "tileSize": 256,
+      "photoOrder": ["aB1cD2eF3gH4i5jK6lM7nO", ...]
+    }
+  }
+]
 ```
 
-- **`cols` / `rows`**: grid dimensions (determined by `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`)
-- **`tileSize`**: short-edge pixel size (256 for thumbnails)
-- **`photoOrder`**: content hashes of photos in row-major tile order, **sorted ascending by `content_hash`**
+- **`avifHash`**: 22-char BLAKE3 of the AVIF content. The backend path is reconstructed as `{partition}/.ouestcharlie/thumbnails-{avifHash}.avif` — it is not stored in the manifest.
+- **`grid.cols` / `grid.rows`**: grid dimensions (max 8×8 for 64 photos; `cols = ceil(sqrt(n))`)
+- **`grid.tileSize`**: short-edge pixel size (256 for thumbnails)
+- **`grid.photoOrder`**: content hashes of photos in row-major tile order, **sorted ascending by `content_hash`**
 
-Ordering tiles by `content_hash` rather than filename ensures stable tile indices: a photo's position only changes when its content changes, not when it is renamed or when other photos are added or removed.
+Photos are sorted by `content_hash` and split into chunks of at most 64 before encoding. Ordering tiles by `content_hash` ensures stable tile indices: a photo's position only changes when its content changes, not when it is renamed or when other photos are added or removed.
 
 ### Access strategy
 
-**Thumbnail AVIF containers** are downloaded in full and **cached on device**. At ~5-8 MB per partition, a full download is a single HTTP request. For local backends, containers are read directly from disk — no caching layer needed.
+**Thumbnail AVIF chunks** are downloaded in full and **cached on device**. At ≤64 photos per file, each chunk is small enough for a fast single HTTP request. For local backends, chunks are read directly from disk — no caching layer needed.
 
-Cache invalidation: when Whitebeard rebuilds a thumbnail container, it updates the `thumbnailsHash` in the manifest. Consumption agents compare the manifest hash against their cached copy and re-fetch on mismatch.
+Cache invalidation: when Whitebeard rebuilds thumbnails, the AVIF filename changes (content-addressed). Consumption agents detect the change via `avifHash` in the manifest and re-fetch stale chunks.
 
 **Preview JPEGs** are generated lazily: on first request, Wally decodes the original photo, resizes it to 1440px on the long edge (preserving aspect ratio), and caches the result at `{partition}/.ouestcharlie/previews/{content_hash}.jpg`. Subsequent requests are served directly from disk. The gallery shows the (blurred) thumbnail tile immediately and fades in the JPEG once loaded — no perceived wait on cache hits.
 
