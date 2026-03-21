@@ -20,17 +20,6 @@ The current `Photo.extract_exif()` implementation has two inefficiencies worth r
 
 **Temp copy on local disk.** pyexiv2 requires a file path — it cannot parse EXIF from an in-memory buffer.  The current code writes the entire image to a `tempfile.mkstemp` file on the local filesystem before calling `pyexiv2.Image(tmp_path)`, then deletes it.  For cloud-backed photos this means downloading the full file and writing it to local disk even when the goal is only to read metadata.  Options worth evaluating: (a) expose a streaming / partial-read path in the backend and write only the first N bytes to the temp file (sufficient for EXIF), (b) switch to a library that accepts in-memory buffers (e.g. `exifread`, `pillow`, or the pyexiv2 `ImageData` API if available), or (c) keep the current approach but bound temp file size when only EXIF is needed.
 
-
-## 9. Tile cache creates small-file explosion and doubles metadata storage
-
-The current thumbnail pipeline caches intermediate JPEG tiles under `.ouestcharlie/tile_cache/` before assembling them into AVIF grids. Two problems:
-
-**Small-file explosion on object stores.** For N photos × 2 tiers, the cache adds 2N individual backend objects. Object stores (S3, kDrive, OneDrive) bill per-request and impose per-object overhead, making this expensive at scale.
-
-**Doubled metadata storage.** JPEG tiles at 95% quality are close in size to the originals' thumbnail resolution, roughly doubling the storage footprint of the `.ouestcharlie/` directory.
-
-**Possible solution.** Decode and resize tiles in memory, pipe them directly to the avif-grid subprocess via a local temp directory that is deleted after encoding. No tile files would be persisted to the backend; `.ouestcharlie/` would contain only `manifest.json`, `thumbnails.avif`, and `previews.avif`. The trade-off is that every AVIF rebuild re-decodes all photos (no incremental update), which is acceptable given that rebuilds are triggered by content changes.
-
 ## 10. Full-file SHA-256 is expensive as a photo identity fingerprint
 
 `content_hash` is currently computed by hashing the entire file with SHA-256.  For large RAW or HEIC files (20–100 MB) on a cloud backend, this means downloading the full file on every first encounter or forced re-index.  The hash is stored in the XMP sidecar after the first run, so the cost is paid once — but it is significant for initial ingestion of large libraries or when detecting changes.
@@ -57,3 +46,17 @@ For V1, Woof is launched on demand by Claude Desktop as a stdio MCP server proce
 **V2 path**: Deploy Woof as a launchd agent on macOS (and equivalent on other platforms). Claude Desktop connects to the already-running instance via the MCP transport declared in the Desktop Extension manifest. The dirty partition queue and activity log (already designed in the LLD) become meaningful only once the daemon model is active.
 
 **V1 constraint accepted**: the dirty partition queue and any background scheduling logic in the LLD are not implemented for V1.
+
+## 12. Large query results
+
+Today, there is no limit, no handling of large query results. Desktop can query the full collection. Results are pushed to Woof which is storing this as a session.
+
+Todo: think of pagination, query result cache or partial query results + heuristic.
+
+## 13. Packaging and install
+
+We need to complete dependency lists for each platform, install on each platform.
+Is the current architecture ok for mobile, or only ok for desktop with apps like Claude?
+Are we compatible with other desktop applications?
+
+We also need an install documentation.

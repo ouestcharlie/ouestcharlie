@@ -283,8 +283,8 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 │   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
 │   │   ├── thumbnails.avif       ← 256px grid for gallery browsing (eager)
 │   │   └── previews/
-│   │       ├── sha256:a1b2....jpg ← 1440px JPEG per photo (lazy, generated on demand)
-│   │       └── sha256:c3d4....jpg
+│   │       ├── Kf3QzA2_nBcR8x....jpg ← 1440px JPEG per photo (lazy, generated on demand)
+│   │       └── aB1cD2eF3gH4i5....jpg
 │   ├── IMG_001.jpg
 │   ├── IMG_001.xmp
 │   ├── IMG_002.heic
@@ -302,7 +302,7 @@ The manifest records the thumbnail grid layout so consumption agents can request
   "cols": 32,
   "rows": 4,
   "tileSize": 256,
-  "photoOrder": ["sha256:a1b2...", "sha256:c3d4...", ...]
+  "photoOrder": ["Kf3QzA2_nBcR8xYvLm1P9w", "aB1cD2eF3gH4i5jK6lM7nO", ...]
 }
 ```
 
@@ -434,11 +434,13 @@ This section details the deduplication mechanisms enabled by the content-based i
 
 ### Hash Computation and Storage
 
-At ingestion, the agent computes `SHA-256(original_file_bytes)` and writes it to the XMP sidecar:
+At ingestion, the agent computes a BLAKE3 hash of the original file bytes, truncated to 128 bits and base64url-encoded (no padding), yielding a 22-character string. This is written to the XMP sidecar:
 
 ```xml
-<ouestcharlie:contentHash>sha256:a1b2c3d4e5f6...</ouestcharlie:contentHash>
+<ouestcharlie:contentHash>Kf3QzA2_nBcR8xYvLm1P9w</ouestcharlie:contentHash>
 ```
+
+128 bits gives a collision probability below 10⁻²⁸ for a library of 1 million photos — negligible.
 
 Since photos are immutable, the hash is stable — it never changes after ingestion, regardless of where the photo is stored.
 

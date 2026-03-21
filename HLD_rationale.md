@@ -178,16 +178,16 @@ Album definitions are device-local (see HLR: Albums for rationale). Manual album
 
 ### Mobile Backup Scenario (illustrative example)
 
-1. User takes a photo on their phone → stored locally with hash `sha256:abc123` written to XMP sidecar
+1. User takes a photo on their phone → stored locally with hash `Kf3QzA2_nBcR8xYvLm1P9w` written to XMP sidecar
 2. Mobile backup agent syncs the photo to S3 → the photo file and its XMP sidecar (containing the same hash) are uploaded
-3. The S3 backend now has a photo with hash `sha256:abc123`, and the local backend has the same
+3. The S3 backend now has a photo with hash `Kf3QzA2_nBcR8xYvLm1P9w`, and the local backend has the same
 4. When a consumption agent queries both backends, it sees two results with the same content hash and deduplicates — showing the photo once, preferring the local copy for display (lower latency)
 5. If the user deletes the local copy, the consumption agent seamlessly falls back to the S3 copy — same hash, same photo, different backend
 
 ### Design Consequences
 
 - **No coordination required**: Each backend independently stores hashes in XMP sidecars. Deduplication is computed at read time, not write time.
-- **Hash collisions**: SHA-256 has a negligible collision probability (2^-128 for birthday attack). No collision handling is needed in practice.
+- **Hash collisions**: BLAKE3 truncated to 128 bits gives a birthday collision probability of ~10⁻²⁸ across 1 million photos — negligible. No collision handling is needed in practice.
 - **Backend migration**: Moving photos between backends preserves identity — the content hash doesn't change, so cross-references, album tags, and enrichment metadata remain valid.
 - **Partial replication**: Users can choose to replicate only some folders to a cloud backend. The hash-based identity ensures that duplicated photos are recognized regardless of their storage path.
 
