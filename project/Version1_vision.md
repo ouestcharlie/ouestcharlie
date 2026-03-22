@@ -12,11 +12,11 @@ Functional goals:
     - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
     - [x] Open picture using file system
-- Controler agent and App (Woof)
+- Controller agent and App (Woof)
     - [x] MCP Server as main entry point
     - [x] MCP client and manager of Wally and Whitebeard
     - [x] MCP App with HTML/JS forms to display the gallery and preview
-- Support for modern image formats (JPEG, HEIC, RAW, PNG)
+- [x] Support for modern image formats (JPEG, HEIC, RAW, PNG)
 
 
 Non functional goals
@@ -30,9 +30,9 @@ Non functional goals
     - retrieval performance as time to get 1st and all matching results
         - criteria: date as full date (Y-M-d), month (Y-M) and year (Y)    
 - Define technologies for Woof and agent
-    - Woof controller and UI
-    - Agent toolkit and implementations
-- Validate controller-agent protocol through MCP
+    - [x] Woof controller and UI
+    - [x] Agent toolkit and implementations
+- [x] Validate controller-agent protocol through MCP
 
 Out of scope:
 - No cloud backends (S3, GCS, ADLS, OneDrive, Kdrive)
