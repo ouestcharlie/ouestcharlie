@@ -281,7 +281,7 @@ No grammar defined. Need to specify: syntax, operators, indexed fields, and how 
 
 ### OP-Q2: Agent tool interface for Wally ✅ resolved
 
-Tool interface defined and implemented. See [wally_LLD.md](../ouestcharlie-wally/wally_LLD.md) for the full design and [controller_api.json](controller_api.json) for the schema. Wally exposes one tool (`search_photos_tool`) accepting structured predicate fields; Woof passes these directly (no DSL parsing in Wally). Progress is reported via `ctx.report_progress` after each leaf manifest scanned.
+Tool interface defined and implemented. See [wally_LLD.md](../ouestcharlie-wally/wally_LLD.md) for the full design and [controller_api.json](controller_api.json) for the schema. Wally exposes one tool (`search_photos`) accepting structured predicate fields; Woof passes these directly (no DSL parsing in Wally). Progress is reported via `ctx.report_progress` after each leaf manifest scanned.
 
 ### OP-Q3: Result ordering and pagination
 
