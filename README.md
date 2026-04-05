@@ -147,7 +147,3 @@ See High-Level Design
 
 MIT license
 
----
-
-**Project Status:** Design complete, implementation in progress
-**Target:** V1 with 10K photos on macOS (local + mounted cloud drives)

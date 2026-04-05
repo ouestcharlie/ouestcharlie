@@ -48,14 +48,14 @@ Before making changes, ALWAYS:
 
 ## Testing & Validation
 
-- Target: 10K photos on macOS (local + mounted cloud drives)
+- Target: 10K photos on local or mounted cloud drives
 - Test against both local filesystem and cloud storage backends
 - Validate MCP communication between Woof and agents
 - Check XMP sidecar consistency
 
 ## Current Phase: Implementation
 
-See README.md for status
+See project/ subfolder for current status and open points
 
 ## Commit Conventions
 
