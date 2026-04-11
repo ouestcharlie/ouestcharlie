@@ -1,12 +1,11 @@
 title: OuEstCharlie Blog
 description: Open, AI-native photo management — built on open standards and privacy
 baseurl: "/ouestcharlie"
-url: "https://antoinehue.github.io"
+url: "https://ouestcharlie.github.io"
 
 theme: minima
 
-author:
-  name: OuEstCharlie
+author: OuEstCharlie
 
 permalink: /:year/:month/:day/:title/
 
