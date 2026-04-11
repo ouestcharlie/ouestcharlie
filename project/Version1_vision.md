@@ -12,6 +12,11 @@ Functional goals:
     - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
     - [x] Open picture using file system
+- Gallery as an MCP App
+    - [x] Gallery integration as MCP App
+    - [x] Grid view based on thumbnails
+    - [x] Carousel view based on previews generated on the fly
+    - [x] Full screen switch
 - Controller agent and App (Woof)
     - [x] MCP Server as main entry point
     - [x] MCP client and manager of Wally and Whitebeard
