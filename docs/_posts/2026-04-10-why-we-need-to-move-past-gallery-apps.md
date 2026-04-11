@@ -122,4 +122,4 @@ The gallery panel appears inline in your conversation with matching results. You
 
 [Get Woof on GitHub](https://github.com/ouestcharlie/ouestcharlie-woof) — see the [README](https://github.com/ouestcharlie/ouestcharlie-woof#readme) for full install and usage details.
 
-<p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof" height="200"></p>
+<p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof" height="600"></p>
