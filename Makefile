@@ -25,7 +25,7 @@ define each_repo
 	done
 endef
 
-.PHONY: branch checkout pull commit push tag sync pr
+.PHONY: branch checkout pull commit push tag sync test pr bump
 
 ## Create a new branch: make branch REPOS=1111 NAME=<branch-name>
 branch:
@@ -59,3 +59,26 @@ tag:
 ## Sync dependencies: make sync REPOS=1111
 sync:
 	$(call each_repo,uv sync)
+
+## Run pytest: make test REPOS=1111 [ARGS="-v -k foo"]
+test:
+	$(call each_repo,.venv/bin/pytest $(ARGS))
+
+## Bump package version(s) and update dependents: make bump REPOS=1000 VERSION=<new-version>
+bump:
+	@[ -n "$(VERSION)" ] || (echo "Usage: make bump REPOS=<selector> VERSION=<new-version>"; exit 1)
+	@all_repos="../ouestcharlie-py-toolkit ../ouestcharlie-whitebeard ../ouestcharlie-wally ../ouestcharlie-woof"; \
+	i=1; for repo in $$all_repos; do \
+		bit=$$(echo "$(REPOS)" | cut -c$$i); \
+		if [ "$$bit" = "1" ]; then \
+			echo "\n>>> Bumping $$repo to $(VERSION)"; \
+			sed -i '' 's/^version = ".*"/version = "$(VERSION)"/' $$repo/pyproject.toml; \
+			pkg=$$(grep '^name = ' $$repo/pyproject.toml | sed 's/^name = "\(.*\)"/\1/'); \
+			for other in $$all_repos; do \
+				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject.toml" ]; then \
+					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject.toml; \
+				fi; \
+			done; \
+		fi; \
+		i=$$((i+1)); \
+	done
