@@ -266,7 +266,7 @@ Workflow:
   "cols": 32,
   "rows": 4,
   "tileSize": 256,
-  "photoOrder": ["sha256:a1b2...", "sha256:c3d4...", ...]
+  "photoOrder": ["a1b2...", "c3d4...", ...]
 }
 ```
 
