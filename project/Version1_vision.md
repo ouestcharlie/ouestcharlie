@@ -11,7 +11,8 @@ Functional goals:
 - Search pictures based on simple predicates (e.g. date)
     - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
-    - [x] Open picture using file system
+    - [] Open picture using file system
+    - [] Batch update of index (only add new photos)
 - Gallery as an MCP App
     - [x] Gallery integration as MCP App
     - [x] Grid view based on thumbnails
