@@ -63,6 +63,11 @@ See project/ subfolder for current status and open points
 - Reference design docs in commit messages when implementing from specs
 - Use Co-Authored-By for AI-assisted changes
 
+## Communication & Documentation
+
+- **OuEstCharlie is cross-platform**: runs on macOS, Windows, and Linux. Never write as if it's macOS-only.
+- **Woof is AI-assistant-agnostic**: compatible with any MCP-capable assistant (Claude Desktop, ChatGPT, Goose, etc.). Never write as if Claude Desktop is the only supported client.
+
 ## What NOT to Do
 
 - ❌ Don't add a central database or stateful storage in Woof
