@@ -21,6 +21,8 @@ Now I want to stress-test it on MacOs, Windows and Linux using Claude Desktop, C
 
 **Looking for beta testers** — if you are curious about running a local-first, AI-native gallery. Drop me a message or comment below and visit the Woof Github, link in the first comment.
 
+*Beta disclaimer: Woof never touches your original files, but please back up your library before trying it.*
+
 
 ---
 
