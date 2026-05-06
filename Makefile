@@ -82,3 +82,4 @@ bump:
 		fi; \
 		i=$$((i+1)); \
 	done
+	$(call each_repo,uv sync)

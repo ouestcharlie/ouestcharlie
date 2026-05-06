@@ -1,5 +1,7 @@
 # Issue 10b: Refactor Backend — local_path() + content_hash()
 
+#status:done
+
 ## Context
 
 Issue 10 introduced `CloudMountedBackend` but the bytes-based approach has two problems:

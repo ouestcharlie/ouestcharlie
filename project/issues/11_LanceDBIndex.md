@@ -1,5 +1,7 @@
 # Feasibility: Replace Manifest Index with LanceDB
 
+#status:analysis
+
 ## Context
 
 OuEstCharlie's current index is a two-level JSON hierarchy:
