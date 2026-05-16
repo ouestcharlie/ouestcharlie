@@ -103,17 +103,17 @@ OuEstCharlie supports **index mode** (preserve existing structure) and **ingest 
 
 ### Index mode: original structure preserved
 
-When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/` metadata directories without moving any files. Any folder that directly contains photos gets a `manifest.json`; a single `summary.json` at the backend root lists all indexed partitions:
+When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/` metadata directories without moving any files. The backend root `.ouestcharlie/` directory holds the LanceDB index and `summary.json`; partition-level `.ouestcharlie/` directories hold only thumbnail AVIF files:
 
 ```
 /Photos/                                    ← user's existing root
 ├── .ouestcharlie/
-│   └── summary.json                        ← flat index of ALL partitions (for pruning)
+│   ├── summary.json                        ← flat index of ALL partitions + schema version
+│   └── index.lance/                        ← LanceDB columnar index (all photos, all partitions)
 ├── Vacations/
 │   ├── Italy 2023/
 │   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json               ← partition manifest (full XMP inline, ~350 photos)
-│   │   │   └── thumbnails.avif
+│   │   │   └── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif
 │   │   ├── DSC_001.jpg
 │   │   ├── DSC_001.xmp                     ← generated at indexing (EXIF extraction)
 │   │   ├── DSC_002.jpg
@@ -121,13 +121,11 @@ When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/
 │   │   └── ...
 │   └── Japan 2024/
 │       ├── .ouestcharlie/
-│       │   ├── manifest.json
-│       │   └── thumbnails.avif
+│       │   └── thumbnails-aB1cD2eF3gH4i5jK6lM7nO.avif
 │       └── ...
 └── Camera Roll/
     ├── .ouestcharlie/
-    │   ├── manifest.json                   ← partition manifest (~2,500 photos — may be large)
-    │   └── thumbnails.avif
+    │   └── thumbnails-cD2eF3gH4i5jK6lM7nO8p.avif
     └── ...
 ```
 
@@ -140,19 +138,18 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
 ```
 /photos/                                    ← backend root
 ├── .ouestcharlie/
-│   └── summary.json                        ← flat index of ALL partitions
+│   ├── summary.json                        ← flat index of ALL partitions + schema version
+│   └── index.lance/                        ← LanceDB columnar index (all photos, all partitions)
 ├── 2024/
 │   ├── 2024-01/
 │   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json               ← partition manifest (~1,000 photos)
-│   │   │   └── thumbnails.avif
+│   │   │   └── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif
 │   │   ├── IMG_001.jpg
 │   │   ├── IMG_001.xmp
 │   │   └── ...
 │   ├── 2024-07/
 │   │   ├── .ouestcharlie/
-│   │   │   ├── manifest.json
-│   │   │   └── thumbnails.avif
+│   │   │   └── thumbnails-aB1cD2eF3gH4i5jK6lM7nO.avif
 │   │   └── ...
 │   └── 2024-12/
 │       └── ...
@@ -165,13 +162,13 @@ Two-level structure: `root/year/month`. Intermediate year folders do not have ma
 #### S3 and GCS (flat namespace, prefix-simulated folders)
 
 ```
-photos/                                     ← bucket prefix (not a real directory)
-├── .ouestcharlie/summary.json               ← flat index of ALL partitions
-├── 2024/2024-01/.ouestcharlie/manifest.json ← partition manifest
-├── 2024/2024-01/.ouestcharlie/thumbnails.avif
+photos/                                                          ← bucket prefix (not a real directory)
+├── .ouestcharlie/summary.json                                    ← flat index of ALL partitions + schema version
+├── .ouestcharlie/index.lance/                                    ← LanceDB columnar index
+├── 2024/2024-01/.ouestcharlie/thumbnails-Kf3QzA2_nBcR8x….avif
 ├── 2024/2024-01/IMG_001.jpg
 ├── 2024/2024-01/IMG_001.xmp
-├── 2024/2024-07/.ouestcharlie/manifest.json
+├── 2024/2024-07/.ouestcharlie/thumbnails-aB1cD2eF3gH4i5….avif
 ├── 2024/2024-07/IMG_001.jpg
 └── ...
 ```
@@ -194,7 +191,7 @@ Same logical structure as local filesystem.
 
 Date-based partitioning targets ~1,000 photos per month. When a month exceeds this target:
 
-- **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes a leaf manifest node.
+- **Local / ADLS Gen2 / OneDrive / Kdrive**: Sub-partition by day — `2024/2024-07/2024-07-14/`. The day folder becomes its own partition in the LanceDB index.
 - **S3 / GCS**: Sub-partition by ingestion batch — `2024/2024-07/batch-001/`. The batch threshold is configurable (default: 1,000 photos per batch).
 
 ### Metadata files
@@ -203,40 +200,35 @@ Photos are organized in folders (partitions). Each folder that directly contains
 
 - **Photo files**: the original images (immutable)
 - **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) in standard XMP format
-- **`manifest.json`**: contains the **full XMP metadata inline** for every photo in the partition, plus partition-level summary statistics (min/max dates, bloom filters, photo count, location bounding box)
 
-The backend root also has:
+The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 
-- **`summary.json`**: a **flat index of all partitions** across the entire backend, each entry holding the same summary statistics as the partition's `manifest.json` summary block. Used for search pruning without reading individual manifests.
+- **`index.lance/`**: a LanceDB columnar store containing **all photos across all partitions** in a single table. Each row stores full per-photo metadata (date, GPS, rating, tags, camera, thumbnail tile location). Consumption agents execute a **single SQL query** against this table to filter across the entire library without per-partition file reads.
+- **`summary.json`**: a **flat index of all partitions**, each entry holding partition-level summary statistics (min/max dates, GPS bounding box, photo count) and the `schemaVersion` (currently `3`). Agents verify the schema version before opening the index; a mismatch prompts a full re-index.
 
-The `manifest.json` is the key enabler for efficient querying without a central database. By embedding full per-photo metadata, a consumption agent reads **one file per partition** instead of scanning individual XMP sidecars.
-
-The `summary.json` enables two-level pruning: reading a single small file at the backend root is enough to skip entire partitions before fetching any manifest.
-
-| Manifest level | Content | Typical size (100K library) |
+| Metadata file | Content | Typical size (100K library) |
 |---|---|---|
-| Root | Consolidates year summaries | ~5 KB |
-| Year | Consolidates month summaries (bloom filters, min/max dates, tag unions) | ~10-20 KB |
-| Leaf (month) | Full per-photo metadata inline + partition summary | ~1-1.5 MB |
+| `index.lance/` | All per-photo metadata in columnar format (one table, all partitions) | ~10–30 MB |
+| `summary.json` | All partition paths + stats + schema version | ~50–100 KB |
 
 ### Schema evolution
 
-Manifests carry a `schemaVersion` field scoped to the `ouestcharlie:` namespace — the only namespace whose semantics OuEstCharlie controls. Schema evolution rules:
+`summary.json` carries a `schemaVersion` field that agents check before opening the index. Current version: **3** (LanceDB columnar index). Schema evolution rules:
 
-- **Unknown fields are ignored and preserved**: an agent encountering an unrecognized field passes it through unchanged, both in manifests and XMP sidecars. This is standard XMP behavior, extended to manifests.
-- **`schemaVersion` governs `ouestcharlie:` fields only**: it tells agents how to interpret OuEstCharlie-specific fields (e.g., a new `ouestcharlie:locationBoundingBox` added in schema v2). Fields outside the `ouestcharlie:` namespace (standard XMP, Dublin Core, EXIF) are unaffected.
-- **Migration = housekeeping rebuild**: when the schema advances, Woof triggers a housekeeping agent that re-reads XMP sidecars and writes manifests in the new format. No separate migration tooling — this is already a supported operation.
+- **Unknown fields are ignored and preserved**: an agent encountering an unrecognized field in `summary.json` or XMP sidecars passes it through unchanged.
+- **`schemaVersion` governs the index format**: version 3 means the primary photo store is the LanceDB table at `.ouestcharlie/index.lance/`. A future version may change the table schema or storage format.
+- **Migration = full re-index**: when the schema advances, Woof triggers a full re-index (Whitebeard) which rebuilds the LanceDB table in the new format. No separate migration tooling — this is already a supported operation.
 
 ### When XMP sidecars are read
 
 XMP sidecars are read only by write-path agents, never by consumption:
 
-| Operation | Reads XMP? | Reads manifest? |
+| Operation | Reads XMP? | Reads index? |
 |---|---|---|
-| Consumption query (browse, search, filter) | No | Yes |
+| Consumption query (browse, search, filter) | No | Yes (LanceDB SQL query) |
 | Enrichment agent (add tags, faces) | Yes (read-modify-write) | Yes (to find unenriched photos) |
-| Housekeeping manifest rebuild | Yes (recompute from sidecars) | No (rebuilding it) |
-| External tool access (Lightroom, ExifTool) | Yes | No (unaware of manifests) |
+| Housekeeping / re-index | Yes (recompute from sidecars) | No (rebuilding it) |
+| External tool access (Lightroom, ExifTool) | Yes | No (unaware of OuEstCharlie index) |
 
 ### Change detection
 
@@ -251,7 +243,7 @@ Per the HLR, OuEstCharlie does not provide edit or delete operations — changes
 | OneDrive | Microsoft Graph delta query | Delta query *is* the sweep |
 | Kdrive | Webhook or polling API | API listing with `modified_at` filter |
 
-The leaf manifest stores each XMP sidecar's **last-known version token** (mtime, ETag, or generation depending on backend). The sweep compares current tokens against stored ones — no XMP content reads needed to detect changes.
+The LanceDB index stores each photo's **last-known XMP version token** (`xmp_version_token` column — mtime, ETag, or generation depending on backend). The sweep compares current tokens against stored values — no XMP content reads needed to detect changes.
 
 **Debouncing**: Changes are not acted on individually. Woof accumulates dirty partitions and schedules housekeeping after a quiet period (default: 10 minutes since the last detected change in a partition). This avoids thrashing when an external tool writes many sidecars in sequence (e.g., Lightroom batch-editing 500 photos).
 
@@ -276,11 +268,8 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 
 ```
 /2024/
-├── .ouestcharlie/
-│   └── manifest.json             ← year-level summary (consolidates months)
 ├── 2024-07/
 │   ├── .ouestcharlie/
-│   │   ├── manifest.json         ← leaf manifest (full XMP inline for ~1,000 photos)
 │   │   ├── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif  ← 256px chunk (≤64 photos, max 8×8)
 │   │   ├── thumbnails-aB1cD2eF3gH4i5jK6lM7nO.avif  ← next chunk if partition > 64 photos
 │   │   └── previews/
@@ -296,26 +285,12 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 └── ...
 ```
 
-The manifest records thumbnail chunks so consumption agents can request specific tiles by index:
+Thumbnail chunk location is stored in the LanceDB index as two flat columns per photo:
 
-```json
-"thumbnailChunks": [
-  {
-    "avifHash": "Kf3QzA2_nBcR8xYvLm1P9w",
-    "grid": {
-      "cols": 8, "rows": 8, "tileSize": 256,
-      "photoOrder": ["aB1cD2eF3gH4i5jK6lM7nO", ...]
-    }
-  }
-]
-```
+- **`thumbnail_avif_hash`**: 22-char BLAKE3 of the AVIF file content. The backend path is reconstructed as `{partition}/.ouestcharlie/thumbnails-{avif_hash}.avif`.
+- **`thumbnail_tile_index`**: row-major position of this photo inside the AVIF grid (0-based).
 
-- **`avifHash`**: 22-char BLAKE3 of the AVIF content. The backend path is reconstructed as `{partition}/.ouestcharlie/thumbnails-{avifHash}.avif` — it is not stored in the manifest.
-- **`grid.cols` / `grid.rows`**: grid dimensions (max 8×8 for 64 photos; `cols = ceil(sqrt(n))`)
-- **`grid.tileSize`**: short-edge pixel size (256 for thumbnails)
-- **`grid.photoOrder`**: content hashes of photos in row-major tile order, **sorted ascending by `content_hash`**
-
-Photos are sorted by `content_hash` and split into chunks of at most 64 before encoding. Ordering tiles by `content_hash` ensures stable tile indices: a photo's position only changes when its content changes, not when it is renamed or when other photos are added or removed.
+Photos are sorted by `content_hash` and split into chunks of at most 64 before encoding. This sort order ensures stable tile indices: a photo's position only changes when its content changes, not when it is renamed or when other photos are added or removed.
 
 ### Access strategy
 
@@ -345,7 +320,7 @@ A smart album is a saved predicate evaluated at query time:
 { "name": "Vacation 2024", "type": "smart", "filter": "date:2024 AND tag:travel" }
 ```
 
-Smart albums are pure consumption queries — they produce results by traversing the manifest tree with the same two-level pruning pipeline used for any filter. They require zero additional storage or enrichment.
+Smart albums are pure consumption queries — they produce results by executing a LanceDB SQL query with the same predicate evaluation used for any filter. They require zero additional storage or enrichment.
 
 ### Manual Albums
 
@@ -382,12 +357,9 @@ Album definitions are **device-local**, not stored in the backend. They are mana
 
 See [HLD_rationale.md § Albums](HLD_rationale.md#albums) for why definitions are device-local and multi-device sync options.
 
-### Integration with Pruning Pipeline
+### Integration with the Query Engine
 
-Album queries use the same two-level pruning as any other filter:
-
-1. **Parent manifest pruning**: The root and year manifests consolidate all tags including `album/*` tags in their bloom filters. A partition whose parent summary has no `album/birthday-party` in its bloom filter is skipped entirely.
-2. **Leaf manifest scan**: For partitions that pass pruning, the leaf manifest contains full per-photo metadata inline — the album tag match is evaluated directly, no XMP sidecar reads needed.
+Album queries execute the same LanceDB SQL query as any other filter. A manual album adds a tag condition: `array_has(tags, 'album/birthday-party')`. The columnar store evaluates tag array membership directly — no per-partition traversal or bloom filter pass is needed.
 
 ## Consistency Model
 
@@ -515,22 +487,19 @@ For detailed Woof requirements, design, and rationale, see:
 
 ## Efficient Filtering and Pruning
 
-Querying photos across a large collection uses a **two-level pruning strategy** inspired by data lakehouse query planning:
+Querying photos uses a **single SQL query** against the LanceDB columnar index at `.ouestcharlie/index.lance/`. All filter predicates (date range, rating, GPS bounding box, tags, camera make/model) are expressed as a SQL WHERE clause evaluated by LanceDB's query engine in one pass — no hierarchical manifest traversal or per-partition file reads are needed.
 
-1. **Parent manifest pruning**: Read top-level manifests (root → year) which contain summary statistics and bloom filters for each child partition. If a partition's summary indicates no photos can match the filter (e.g., date range outside bounds, person absent from bloom filter), skip the entire subtree.
-
-2. **Leaf manifest scan**: For partitions that pass pruning, read the leaf manifest which contains **full per-photo metadata inline**. Evaluate the complete predicate against all entries and return matching photos. No per-photo file reads are needed — the manifest is self-contained.
-
-This two-level approach (parent manifest pruning → leaf manifest scan) minimizes file reads. A consumption agent never reads individual XMP sidecars — it reads at most one manifest per partition that passes pruning.
+Before executing the query, consumption agents read `summary.json` to verify `schemaVersion`. A mismatch returns an error prompting a full re-index.
 
 ### Query cost example
 
-"Show me photos of Alice from July 2024" on a 100,000 photo library (100 leaf partitions × 1,000 photos):
+"Show me photos from July 2024 with rating ≥ 4" on a 100,000 photo library:
 
-1. Read root manifest (~5 KB) → year summaries → prune years without "Alice" in bloom filter
-2. Read 2024 year manifest (~15 KB) → month summaries → bloom filter confirms "Alice" may exist in Jul and Sep → prune 10 other months
-3. Read Jul 2024 leaf manifest (~1.5 MB) → scan 1,000 inline entries → return 12 matching photos
-4. **Total: 3 file reads (~1.5 MB)** — instead of 100,000 XMP sidecar reads without pruning
+1. Read `summary.json` (~50 KB) → verify `schemaVersion == 3`
+2. Execute SQL: `date_taken >= TIMESTAMP '2024-07-01 00:00:00' AND date_taken <= TIMESTAMP '2024-07-31 23:59:59' AND rating >= 4`
+3. **Total: 1 JSON read + 1 SQL query** — LanceDB's columnar predicate pushdown reads only the date and rating columns
+
+A consumption agent never reads individual XMP sidecars or per-partition manifest files.
 
 ## Security and Access Control
 
