@@ -2,6 +2,30 @@
 
 OuEstCharlie is a decentralized photo management system designed around cheap cloud storage. The architecture is inspired by data lakehouse table formats (Iceberg, Delta).
 
+## Concepts
+
+### Libraries and partitions
+
+A photo or video **library** is a collection of media files and the associated metadata. 
+
+A library is organized in **partitions**. A partition regroups photo files in a directory. It might have a semantic similar to an album, or
+
+Metadata is either at the photo level, 
+
+### Albums and tags
+
+**Albums** and **Tags** are close concepts of adding metadata to photos to group them using filters. See also the section "Albums" here below.
+
+### Gallery and views
+
+The **gallery** is a display of the photos or metadata within the user interface. Several **views** are possible: grid, preview, geo map, stream...
+The gallery is also able **edit information to add metadata** to the photos.
+
+### Backends
+
+**Backend** is the management of the persistency of photos. It may be on local, synchronized or remote drives.
+
+
 ## Key Architectural Principles
 
 **Thought for the agentic world**: OuEstCharlie is "agent native", acting as a companion to MCP host providing access to rich content. It is also architected as a crowd of agent, allowing for responsibility segregation and extensibility.
@@ -24,6 +48,8 @@ OuEstCharlie is a decentralized photo management system designed around cheap cl
 
 **No edit or delete**: OuEstCharlie does not provide photo editing, renaming, moving, or deleting operations. Photo management happens through external tools or the filesystem directly. OuEstCharlie detects external changes (additions, deletions, metadata edits) and keeps its metadata in sync.
 
+**Least privilege**: Agents register with Woof and declare the scope they require. At deployment time, the user explicitly approves the requested grants. Once approved, Woof can trigger agent runs autonomously — issuing scoped, short-lived credentials within the approved grants without further user confirmation.
+
 **Content-based identity**: Each photo is identified by a compact hash of its original file content, stored in the XMP sidecar at ingestion. This hash is the universal photo ID — it is stable (photos are immutable), backend-independent, and enables cross-backend deduplication without coordination.
 
 **Open standards and royalty-free formats**: All metadata and derived artifacts use open, royalty-free formats — XMP for sidecar metadata, JSON for manifests and configuration, AVIF for thumbnails. No proprietary or patent-encumbered format dependency.
@@ -32,7 +58,7 @@ OuEstCharlie is a decentralized photo management system designed around cheap cl
 
 **Date-based partitioning**: In ingest mode, photos are organized by capture date (`YYYY/YYYY-MM/`) as the primary partitioning dimension. Date is chosen because it is the most common query filter, produces naturally balanced partitions, and aligns the physical storage layout with the manifest pruning tree for efficient queries.
 
-# Agent Taxonomy
+## Agent Taxonomy
 Three categories of agents, all orchestrated by Woof:
 
 | Type | Purpose | Trigger |
@@ -42,7 +68,7 @@ Three categories of agents, all orchestrated by Woof:
 | Data consumption | Query & browse photos by filters (person, date, location, etc.) | User browses/searches in UI |
 | Data consumption | Memories: surface highlights like "on this day", notable trips, people milestones | User views feed in UI, or on schedule |
 
-# Albums
+## Albums
 
 Albums are virtual collections implemented as XMP tags and saved filters — no separate data structure needed.
 
@@ -51,10 +77,7 @@ Albums are virtual collections implemented as XMP tags and saved filters — no 
 
 Album definitions (saved filters) are stored in the device configuration (`~/.ouestcharlie/albums.json`), not in the backend. This allows albums to span multiple backends and avoids cross-backend synchronization of definitions.
 
-# Ingestion Paths
+## Ingestion Paths
 Interactive: User imports via UI (e.g., mobile backup)
 Batch: bulk import
 
-# Least privilege
-
-Agents register with Woof and declare the scope they require. At deployment time, the user explicitly approves the requested grants. Once approved, Woof can trigger agent runs autonomously — issuing scoped, short-lived credentials within the approved grants without further user confirmation.
