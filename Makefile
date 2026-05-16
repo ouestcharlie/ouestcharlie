@@ -73,6 +73,12 @@ bump:
 		if [ "$$bit" = "1" ]; then \
 			echo "\n>>> Bumping $$repo to $(VERSION)"; \
 			sed -i '' 's/^version = ".*"/version = "$(VERSION)"/' $$repo/pyproject.toml; \
+			if [ -f "$$repo/pyproject_packaging.toml" ]; then \
+				sed -i '' 's/^version = ".*"/version = "$(VERSION)"/' $$repo/pyproject_packaging.toml; \
+			fi; \
+			if [ -f "$$repo/manifest.json" ]; then \
+				sed -i '' 's/"version": "[0-9][0-9.]*"/"version": "$(VERSION)"/' $$repo/manifest.json; \
+			fi; \
 			pkg=$$(grep '^name = ' $$repo/pyproject.toml | sed 's/^name = "\(.*\)"/\1/'); \
 			for other in $$all_repos; do \
 				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject.toml" ]; then \

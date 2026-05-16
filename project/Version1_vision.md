@@ -12,7 +12,7 @@ Functional goals:
     - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
     - [] Open picture using file system
-    - [] Batch update of index (only add new photos)
+    - [x] Batch update of index (only add new photos)
 - Gallery as an MCP App
     - [x] Gallery integration as MCP App
     - [x] Grid view based on thumbnails
