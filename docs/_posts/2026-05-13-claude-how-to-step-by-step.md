@@ -43,13 +43,13 @@ Once successful, the Woof extension appears as enabled:
 
 ## First steps in Claude Desktop
 
-You can verify that Woof is correctly installed by asking Claude: "Is OuEstCharlie Woof loaded?" Claude may ask you to authorize listing backends — see below for details.
+You can verify that Woof is correctly installed by asking Claude: "Is OuEstCharlie Woof loaded?" Claude may ask you to authorize listing libraries — see below for details.
 
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/010.png" | relative_url }}" alt="Check if Woof is loaded in Claude Desktop" max-height="600"></p>
 
-Before searching and browsing photos, you need to point Woof to your photo library. This is done by creating a **backend**, which consists of a nickname and the path to your photo library on your local drive.
+Before searching and browsing photos, you need to point Woof to your photo library. This is done by creating a **library**, which consists of a nickname and the path to your photo library on your local drive.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/011.png" | relative_url }}" alt="Define a Woof backend in Claude Desktop" max-height="600"></p>
+<p align="center"><img src="{{ "/assets/ClaudeHowTo/011.png" | relative_url }}" alt="Define a Woof library in Claude Desktop" max-height="600"></p>
 
 Supported drive types are:
 - *filesystem*: any local or local-area network drive
@@ -57,11 +57,11 @@ Supported drive types are:
 
 > Cloud-mounted drives may cause issues if photo files are "dehydrated" (i.e. their content is not immediately available locally). The workaround is to download the files before indexing the library.
 
-Creating a backend will require your confirmation.
+Creating a library will require your confirmation.
 
-> It is recommended to allow only once for commands that modify your drive — such as *create backend* and *index backend*. For read-only commands like *list backends*, *list search fields*, *search*, or *browse*, you can allow permanently.
+> It is recommended to allow only once for commands that modify your drive — such as *create library* and *index library*. For read-only commands like *list libraries*, *list search fields*, *search*, or *browse*, you can allow permanently.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/012.png" | relative_url }}" alt="Allow creation of a Woof backend in Claude Desktop" max-height="600"></p>
+<p align="center"><img src="{{ "/assets/ClaudeHowTo/012.png" | relative_url }}" alt="Allow creation of a Woof library in Claude Desktop" max-height="600"></p>
 
 Once the library has been added, the next step is to index its contents. Indexing extracts metadata (date, GPS location, dimensions, tags, etc.) and generates optimized thumbnails. Depending on library size, drive throughput, and machine performance, this may take several minutes. Typical indexing speed is 500–1,500 photos/min.
 
