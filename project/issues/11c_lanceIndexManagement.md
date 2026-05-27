@@ -1,6 +1,6 @@
 # OEC#11c — LanceDB index maintenance: compaction and version pruning
 
-#status:open
+#status:done
 
 ## Context
 
