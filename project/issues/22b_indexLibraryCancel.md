@@ -1,6 +1,6 @@
 # OEC#22b — Stop button: cancel indexing from gallery UI
 
-#status:open
+#status:done
 
 ## Context
 

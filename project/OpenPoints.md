@@ -8,10 +8,6 @@ The HLR says "photo management" but modern phone libraries are 30-50% video. The
 
 The architecture has local + cloud backends, but there's no design for what happens when the cloud is unreachable. Can the user still browse? Are manifests cached locally? What about writes queued for sync? This is critical for mobile use cases (mobile backup is explicitly listed as a use case).
 
-## 7. No search or query language specification
-
-The HLD shows filter examples like `date:2024 AND tag:travel` and `rating >= 4` but never defines the query language. Bloom filters are mentioned for pruning, but what fields are indexed? What operators are supported? This is central to how consumption agents work.
-
 ## 8. EXIF extraction reads the full image and writes a temp copy to local disk
 
 The current `Photo.extract_exif()` implementation has two inefficiencies worth revisiting:
@@ -20,7 +16,7 @@ The current `Photo.extract_exif()` implementation has two inefficiencies worth r
 
 **Temp copy on local disk.** pyexiv2 requires a file path — it cannot parse EXIF from an in-memory buffer.  The current code writes the entire image to a `tempfile.mkstemp` file on the local filesystem before calling `pyexiv2.Image(tmp_path)`, then deletes it.  For cloud-backed photos this means downloading the full file and writing it to local disk even when the goal is only to read metadata.  Options worth evaluating: (a) expose a streaming / partial-read path in the backend and write only the first N bytes to the temp file (sufficient for EXIF), (b) switch to a library that accepts in-memory buffers (e.g. `exifread`, `pillow`, or the pyexiv2 `ImageData` API if available), or (c) keep the current approach but bound temp file size when only EXIF is needed.
 
-## 10. Full-file SHA-256 is expensive as a photo identity fingerprint
+## 10. Full-file ~~SHA-256~~ hash is expensive as a photo identity fingerprint
 
 `content_hash` is currently computed by hashing the entire file with SHA-256.  For large RAW or HEIC files (20–100 MB) on a cloud backend, this means downloading the full file on every first encounter or forced re-index.  The hash is stored in the XMP sidecar after the first run, so the cost is paid once — but it is significant for initial ingestion of large libraries or when detecting changes.
 
@@ -46,12 +42,6 @@ For V1, Woof is launched on demand by Claude Desktop as a stdio MCP server proce
 **V2 path**: Deploy Woof as a launchd agent on macOS (and equivalent on other platforms). Claude Desktop connects to the already-running instance via the MCP transport declared in the Desktop Extension manifest. The dirty partition queue and activity log (already designed in the LLD) become meaningful only once the daemon model is active.
 
 **V1 constraint accepted**: the dirty partition queue and any background scheduling logic in the LLD are not implemented for V1.
-
-## 12. Large query results
-
-Today, there is no limit, no handling of large query results. Desktop can query the full collection. Results are pushed to Woof which is storing this as a session.
-
-Todo: think of pagination, query result cache or partial query results + heuristic.
 
 ## 13. Packaging and install
 

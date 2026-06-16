@@ -1,6 +1,6 @@
 # Feasibility: Replace Manifest Index with LanceDB
 
-#status:review
+#status:done
 
 ## Context
 

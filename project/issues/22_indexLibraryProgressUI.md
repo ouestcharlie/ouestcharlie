@@ -1,6 +1,6 @@
 # OEC#22 — Index library progress UI
 
-#status:inprogress
+#status:done
 
 ## Context
 

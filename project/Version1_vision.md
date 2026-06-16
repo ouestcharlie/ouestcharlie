@@ -6,8 +6,9 @@ Functional goals:
 - Index pictures on local drive (MacOs)
     - [x] Create corresponding agent (Whitebeard)
     - [x] Create XMP including ouestcharlie: specific fields (picture identity hash...)
-    - [x] Create manifests (leaf)
+    - [x] ~~Create manifests (leaf)~~ LanceDB index
     - [x] Create thumbnails and previews
+    - [x] Trivial reindex: check new partitions of image files, do not check metadata or photo changes
 - Search pictures based on simple predicates (e.g. date)
     - [x] Create corresponding consumption agent (Wally)
     - Retrieve and cache matching manifests and previews
@@ -18,6 +19,7 @@ Functional goals:
     - [x] Grid view based on thumbnails
     - [x] Carousel view based on previews generated on the fly
     - [x] Full screen switch
+    - [x] Indexing progress UI
 - Controller agent and App (Woof)
     - [x] MCP Server as main entry point
     - [x] MCP client and manager of Wally and Whitebeard
@@ -27,9 +29,9 @@ Functional goals:
 
 Non functional goals
 - Test context
-    - Standard local drive
-    - Mounted cloud drive (iCloud, Onedrive)
-    - 10k pictures
+    - [x] Standard local drive
+    - [x] Mounted cloud drive (iCloud, Onedrive, kDrive)
+    - [x] 10k pictures
 - Tests to accomplish
     - indexing performance
         - criteria: time to index 100, 1k and 10k pictures
@@ -45,14 +47,14 @@ Out of scope:
 - No enrichment agents (faces, scenes)
 - No albums
 - No ingest mode (index only)
-- No change detection / re-indexing
+- Only trivial re-indexing (do not check photo metadata updates)
 - No multi-device
-- No bloom filters
+~~- No bloom filters~~
 - No background daemon (launchd): Woof runs as a stdio MCP server launched on demand by Claude Desktop. Daemon mode is deferred to V2 when change detection and scheduled enrichment justify it.
 
 ## Decisions
 - **Woof**: Local MCP server + Claude Desktop as UI shell. Woof is launched on demand by Claude Desktop as a stdio MCP server and exposes OuEstCharlie capabilities as MCP tools. The gallery is served as an MCP App (interactive iframe inside Claude Desktop's conversation). No standalone desktop app and no background daemon for V1. See [woof_LLD_rationale.md](../ouestcharlie-woof/woof_LLD_rationale.md) for the decision analysis; the Tauri and daemon alternatives are preserved there for reference.
-- **Agents**: Python + Rust AVIF helper. Official MCP Python SDK, rich image ecosystem (Pillow, rawpy, pyexiv2). Rust CLI tool for AVIF grid container assembly. See [agent/agent_LLD_rationale.md](../agent/agent_LLD_rationale.md).
+- **Agents**: Python + Rust AVIF helper. Official MCP Python SDK, rich image ecosystem (~~Pillow~~, rawpy, pyexiv2). Rust CLI tool for AVIF grid container assembly. See [agent/agent_LLD_rationale.md](../agent/agent_LLD_rationale.md).
 
 ## Open points
 - Query interface

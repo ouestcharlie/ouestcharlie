@@ -1,5 +1,7 @@
 # OEC-23: Tags in Results + Full-Text Search on Description
 
+#status:done
+
 ## Context
 
 Issue 23 adds two related features:
@@ -199,6 +201,67 @@ No backward-compat shim — hard removal. Any existing client passing `root=` wi
 | py-toolkit | `fields.py` | Add `description` `FieldDef` |
 | wally | `searcher.py` | Tag facets computation; FTS WHERE clause for description |
 | wally | `agent.py` | Expose `tagFacets` in result JSON |
+
+---
+
+## Part 4 — Camera Settings Fields (EXIF shoot metadata)
+
+### Motivation
+
+Several useful search queries ("show me photos shot at ISO > 3200", "wide-angle shots", "everything taken with the 85mm lens") are impossible today because shoot settings are not indexed. Adding a small set of numeric and string EXIF fields to the schema enables range filters and keyword filters on these dimensions without requiring any AI enrichment.
+
+### Fields to add
+
+| Field name | XMP / EXIF source | Lance type | Search type |
+|---|---|---|---|
+| `iso_speed` | `exif:ISOSpeedRatings` | `pa.int32()` | numeric range |
+| `aperture` | `exif:FNumber` (rational) | `pa.float32()` | numeric range |
+| `exposure_time` | `exif:ExposureTime` (rational, stored as seconds) | `pa.float32()` | numeric range |
+| `focal_length` | `exif:FocalLength` (rational, mm) | `pa.float32()` | numeric range |
+| `focal_length_35mm` | `exif:FocalLengthIn35mmFilm` | `pa.int32()` | numeric range |
+| `lens_model` | `aux:Lens` (Adobe) or `exifEX:LensModel` | `pa.string()` | string match |
+
+Lower-priority (add later if needed): `exposure_bias` (`exif:ExposureBiasValue`, float EV), `flash_fired` (bit 0 of `exif:Flash`, bool), `white_balance` (`exif:WhiteBalance`, int 0=auto/1=manual), `metering_mode` (`exif:MeteringMode`, int enum).
+
+### Where the change lands
+
+**`ouestcharlie-py-toolkit` — `schema.py`** — add to `XmpSidecar`:
+```python
+iso_speed: int | None = None            # exif:ISOSpeedRatings
+aperture: float | None = None           # exif:FNumber (e.g. 2.8)
+exposure_time: float | None = None      # exif:ExposureTime in seconds (e.g. 0.004 = 1/250)
+focal_length: float | None = None       # exif:FocalLength in mm
+focal_length_35mm: int | None = None    # exif:FocalLengthIn35mmFilm
+lens_model: str | None = None           # aux:Lens or exifEX:LensModel
+```
+
+**`xmp.py`** — parsing notes:
+- `exif:ISOSpeedRatings` is a `rdf:Seq` of integers; take the first element.
+- `exif:FNumber`, `exif:ExposureTime`, `exif:FocalLength` are EXIF rationals (`"numerator/denominator"`); parse with the existing `_exif_rational_to_float()` helper or equivalent.
+- `exif:FocalLengthIn35mmFilm` is a plain integer.
+- `aux:Lens` is a plain string (Adobe namespace `http://ns.adobe.com/exif/1.0/aux/`). `exifEX:LensModel` (`http://cipa.jp/exif/1.0/`) is the CIPA standard; check both, prefer `exifEX:LensModel` if present.
+
+**`lance_index.py`** — add columns to `PHOTO_SCHEMA` and row builder. No FTS index needed (numeric range and string LIKE are sufficient). Add to `_add_missing_columns()` migration.
+
+**`fields.py`** — add `FieldDef` entries:
+```python
+FieldDef(name="iso_speed",         type=FieldType.INT_RANGE,     entry_attr="iso_speed",         label="ISO"),
+FieldDef(name="aperture",          type=FieldType.FLOAT_RANGE,   entry_attr="aperture",          label="Aperture (f-number)"),
+FieldDef(name="exposure_time",     type=FieldType.FLOAT_RANGE,   entry_attr="exposure_time",     label="Exposure time (s)"),
+FieldDef(name="focal_length",      type=FieldType.FLOAT_RANGE,   entry_attr="focal_length",      label="Focal length (mm)"),
+FieldDef(name="focal_length_35mm", type=FieldType.INT_RANGE,     entry_attr="focal_length_35mm", label="Focal length 35mm equiv."),
+FieldDef(name="lens_model",        type=FieldType.STRING_MATCH,  entry_attr="lens_model",        label="Lens"),
+```
+
+If `FLOAT_RANGE` is not yet a `FieldType`, add it alongside `INT_RANGE` — the WHERE-clause builder for both is the same pattern (`column >= min AND column <= max`).
+
+**`wally/agent.py`** — no change needed if the fields flow through the generic dispatch.
+
+### Verification
+
+- Parse a raw file or sidecar known to have EXIF shoot data; assert `iso_speed`, `aperture`, `exposure_time`, `focal_length` are non-None and have expected values.
+- Run the indexer; query `select iso_speed, aperture, focal_length, lens_model from photos limit 10` in LanceDB.
+- Search with `iso_speed_min=3200` returns only high-ISO shots; search with `lens_model="85mm"` returns the expected subset.
 
 ---
 

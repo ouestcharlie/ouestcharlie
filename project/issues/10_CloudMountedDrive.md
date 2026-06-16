@@ -1,6 +1,6 @@
 # Issue 10: CloudMountedBackend for FUSE/File Provider cloud sync mounts
 
-#status:ongoing
+#status:done
 
 ## Context
 When indexing a library on a cloud-mounted drive (kDrive, OneDrive, Google Drive, Dropbox), files not yet downloaded locally cause pyexiv2.Image() to fail. The behaviour depends on the platform and provider:
