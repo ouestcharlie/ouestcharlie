@@ -71,9 +71,11 @@ On macOS, an additional permission prompt may appear:
 
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/014.png" | relative_url }}" alt="Allow Woof to access document files in Claude Desktop" max-height="600"></p>
 
-When indexing is complete, Claude displays a summary of the library and the indexing results:
+Durign the indexing, a progress bar is shown as well as details of the last indexed partitions. When indexing is complete, the UI displays a summary of the library and the indexing results:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/015.png" | relative_url }}" alt="Indexing summary in Claude Desktop" max-height="600"></p>
+<p align="center"><img src="{{ "/assets/ClaudeHowTo/015b.png" | relative_url }}" alt="Indexing summary in Claude Desktop" max-height="600"></p>
+
+Claude and Woof are ready to start photo search and browsing.
 
 ## First search
 
