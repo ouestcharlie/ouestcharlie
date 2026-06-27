@@ -84,7 +84,7 @@ bump:
 				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject.toml" ]; then \
 					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject.toml; \
 				fi; \
-				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject_packaging.toml" ]; then \
+				if [ -f "$$other/pyproject_packaging.toml" ]; then \
 					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject_packaging.toml; \
 				fi; \
 			done; \
