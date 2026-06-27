@@ -21,17 +21,31 @@ You need to [install Claude Desktop on your machine](https://support.claude.com/
 
 Woof is installed by the [uv](https://docs.astral.sh/uv/) Python package manager, which is normally bundled with Claude Desktop. If you run into issues, see the Troubleshooting section below.
 
+System prerequisites (all install options):
+- **macOS**: `brew install inih brotli gettext` (required by pyexiv2 at runtime)
+- **Linux/Windows**: no extra steps
+
 ## Install Woof in Claude
 
 The simplest way to install Woof is through the MCP bundle included in the [Woof releases](https://github.com/ouestcharlie/ouestcharlie-woof/releases): download the latest `ouestcharlie-woof-x.y.z.mcpb` file.
 
-Double-click the downloaded MCP bundle — Claude should open it and display the following dialog:
+> Double-click on the downloaded MCP bundle  will fail in latest versions of Claude
 
+If double-clicking the `ouestcharlie-woof-x.y.z.mcpb` file does not open Claude, you can install it directly from the Claude Desktop settings by clicking the **Extensions** tab:
+
+<p align="center"><img src="{{ "/assets/ClaudeHowTo/021.png" | relative_url }}" alt="Select Extension in Claude Desktop Settings" max-height="600"></p>
+
+Enable **Advanced Settings**, then click **Install Extension**. In the file browser dialog, select the `ouestcharlie-woof-x.y.z.mcpb` file and follow the install steps described above.
+
+<p align="center"><img src="{{ "/assets/ClaudeHowTo/022.png" | relative_url }}" alt="Install Extension in Claude Desktop Settings" max-height="600"></p>
+
+<!--
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/001.png" | relative_url }}" alt="Open the Woof MCP bundle in Claude Desktop" height="600"></p>
 
 If Claude is not launched by the double-click, see the section "Alternate bundle install from the Claude settings" below.
 
 Review the dialog and confirm the install by clicking **Install**.
+-->
 
 A second confirmation step is required:
 
@@ -85,15 +99,9 @@ You can now search and browse your library using Claude's prompt for queries, an
 
 ---
 
-## Alternate bundle install from the Claude settings
+## Alternative to bundle install in Claude Desktop
 
-If double-clicking the `ouestcharlie-woof-x.y.z.mcpb` file does not open Claude, you can install it directly from the Claude Desktop settings by clicking the **Extensions** tab:
-
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/021.png" | relative_url }}" alt="Select Extension in Claude Desktop Settings" max-height="600"></p>
-
-Enable **Advanced Settings**, then click **Install Extension**. In the file browser dialog, select the `ouestcharlie-woof-x.y.z.mcpb` file and follow the install steps described above.
-
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/022.png" | relative_url }}" alt="Install Extension in Claude Desktop Settings" max-height="600"></p>
+If install based on the bundle (.mcpb file) fails, you will need to edit the developer configuration as explained in the [README of Woof](https://github.com/ouestcharlie/ouestcharlie-woof#option-b--manual-uvx-configuration).
 
 ## Troubleshooting
 
