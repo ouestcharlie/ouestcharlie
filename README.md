@@ -1,5 +1,8 @@
 # OuEstCharlie
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![MCP Compatible](https://img.shields.io/badge/MCP-compatible-blueviolet)](https://modelcontextprotocol.io/)
+
 A decentralized, storage-agnostic photo management system inspired by data lakehouse architectures.
 
 ## Overview
