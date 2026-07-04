@@ -45,6 +45,7 @@ Before making changes, ALWAYS:
 - **Use established patterns**: Follow the existing LLR/LLD/rationale structure
 - **Mark open questions**: Add to [OpenPoints.md](../OpenPoints.md) if uncertain
 - **Avoid listing individual code files**: Don't enumerate specific implementation files in documentation - it's not maintainable. Instead, describe patterns, directories, or link to generated documentation
+- **Document only what is non-obvious**: Don't document APIs or what code already makes clear by reading it. Only document constraints, architectural decisions, non-obvious invariants, and cross-cutting behavior not visible from a single file.
 
 ## Testing & Validation
 

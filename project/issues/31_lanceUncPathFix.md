@@ -1,5 +1,7 @@
 # OEC-31: Fix LanceDB connection failure on Windows UNC (Samba) paths
 
+#status:discarded replaced by the 31c solution
+
 ## Context
 
 A tester running on Windows with a NAS mounted via Samba (UNC path `\\server\share`) hits this
