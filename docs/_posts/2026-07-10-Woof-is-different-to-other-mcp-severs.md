@@ -25,17 +25,17 @@ None of them render a live, interactive photo gallery inside the AI conversation
 
 ### How they stack up
 
-| MCP server | Search | Browse in-chat | No credential sharing |
-|---|---|---|---|
-| **Woof** | 🟡 Full-text search on description + structured facets (date, rating, dimensions, orientation, tags, GPS, camera make/model/lens, ISO/aperture/shutter/focal length) | ✅ Inline MCP App (grid/carousel/full-screen), rendered live in the conversation | ✅ Local-only, STDIO |
-| drolosoft/immich-photo-manager | ✅ Semantic (CLIP) + geo/temporal | 🟡 Generates a separate HTML gallery page, not inline | ❌ Immich instance API key |
-| barryw/ImmichMCP | ✅ Semantic (CLIP) + metadata filters | ❌ JSON + URLs only, no gallery | ❌ Immich instance API key |
-| sweetrb/apple-photos-mcp | Structured facets (date/album/keyword/person) | ❌ JSON only, view in Photos.app or export | ✅ Local-only, no credentials |
-| savethepolarbears/google-photos-mcp | ✅ Text search + structured facets | 🟡 Picker API opens Google's picker in the browser, not inline | ❌ Google OAuth client ID/secret |
+| MCP server | Search | Browse in-chat | No credential sharing | Metadata editing |
+|---|---|---|---|---|
+| **Woof** | 🟡 Full-text search on description + structured facets | ✅ Inline MCP App (grid/carousel/full-screen), rendered live in the conversation | ✅ Local-only, STDIO | ❌ Read-only, index-and-search only |
+| drolosoft/immich-photo-manager | ✅ Semantic (CLIP) + facets (geo/temporal) | 🟡 Generates a separate HTML gallery page, not inline | ❌ Immich instance API key | ✅ Tags, bulk rotation, metadata repair (timestamps/GPS/timezone), trash/delete/restore, face merge |
+| barryw/ImmichMCP | ✅ Semantic (CLIP) + facets | ❌ JSON + URLs only, no gallery | ❌ Immich instance API key | ✅ Asset metadata update, full album/tag CRUD, people update/merge, comments/likes |
+| sweetrb/apple-photos-mcp | Structured facets (date/album/keyword/person) | ❌ JSON only, view in Photos.app or export | ✅ Local-only, no credentials | ❌ Explicitly read-only against the library, export-only |
+| savethepolarbears/google-photos-mcp | ✅ Text search + structured facets | 🟡 Picker API opens Google's picker in the browser, not inline | ❌ Google OAuth client ID/secret | 🟡 Album create/upload/cover + album-level enrichment only, no per-photo rating/tag/caption |
 
 A note on that last column: the two Immich-backed servers need an API key for the user's **own self-hosted** Immich instance — a smaller trust boundary than handing OAuth credentials to a third-party cloud API, even though both count as "a credential the MCP server holds."
 
-Woof is the only one with a live in-conversation gallery. Its search is also richer than "filter-based" suggests: a wide set of structured facets, backed by a local index, plus genuine full-text search over the description field — ranked, not just substring matching — all combinable with AND/OR. What it doesn't have yet is CLIP-style *visual* semantic search: finding a photo because it looks like a sunset, not because the word "sunset" appears somewhere in its tags or description. More on that below.
+Woof can combine many facets (date, rating, dimensions, orientation, tags, GPS, camera make/model/lens, ISO/aperture/shutter/focal length) and textual description. What it doesn't have yet is CLIP-style *visual* semantic search: finding a photo because it looks like a sunset, not because the word "sunset" appears somewhere in its tags or description. More on that below.
 
 ---
 
@@ -63,7 +63,11 @@ Every fact Woof learns about a photo — tags, ratings, description, GPS, camera
 
 ## Where Woof Still Trails
 
-To be direct about it: Woof V1 only supports local and mounted drives. The Immich-backed competitors already run against a real, self-hosted multi-user server — a legitimate advantage if your library lives there. And while Woof's structured facets plus full-text description search cover a lot of ground, it isn't CLIP-style visual semantic search. "Sunset at the beach" only finds something if that language shows up in a tag, a keyword, or the description — Immich-backed competitors search the actual pixel content of the photo. Woof also doesn't yet support editing, or enrichment agents for faces and scenes; today it's index-and-search only. None of this is a hidden strength dressed up as a weakness — it's the honest roadmap.
+Woof V1 only supports local and mounted drives. Competitors already run against a real, hosted or self-hosted multi-user server — a legitimate advantage if your library lives there. 
+
+While Woof's structured facets and full-text description search cover a lot of ground, it isn't CLIP-style visual semantic search. "Sunset at the beach" only finds something if that language shows up in a tag, a keyword, or the description — most competitors search the actual pixel content of the photo. 
+
+Also, Woof is not editing the metadata yet: rating, commenting, grouping into albums of tags.
 
 ## What's Next
 
@@ -77,5 +81,7 @@ Woof optimizes the *experience* of asking and then looking — search and browsi
 - [Apple's official MCP servers](https://thenewstack.io/safari-mcp-platform-infrastructure/) are Safari/WebKit developer tools, not Photos.
 - [Microsoft ships an official OneDrive/SharePoint MCP server](https://github.com/microsoft/mcp), but it's general file management, not a photo-specific search-and-browse surface.
 - AWS's [official MCP servers](https://awslabs.github.io/mcp/) are cloud infrastructure — nothing for Amazon Photos.
+
+Metadata-editing capabilities (see the comparison table above) are drawn from the same READMEs already linked in **The Landscape Today**: drolosoft/immich-photo-manager's "Highlights" section (tags, bulk rotation, metadata repair, trash lifecycle, face merge), barryw/ImmichMCP's Albums/People/Tags/Activities tool tables, sweetrb/apple-photos-mcp's explicit "Read-only against the Photos library" banner, and savethepolarbears/google-photos-mcp's "Write operations" list (album-level only, no per-photo fields).
 
 {% include tryitnow.md %}
