@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "Step by Step install of OuEstCharlie Woof in Claude Desktop"
+title: "Step by Step Install of OuEstCharlie Woof in Claude Desktop"
 date: 2026-05-13
 image: /assets/ClaudeHowTo/016.png
 categories: [howto]

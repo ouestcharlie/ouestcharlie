@@ -2,7 +2,7 @@
 layout: post
 title: "Woof Is Different From Other Photo MCP Servers"
 date: 2026-07-10
-image: /assets/woof_large_850.png
+image: /assets/screenshot_2026-07-10.jpg
 categories: [comparison]
 ---
 
@@ -43,7 +43,7 @@ Woof can combine many facets (date, rating, dimensions, orientation, tags, GPS, 
 
 Woof's gallery is an MCP App — an interactive view rendered directly inside the Claude conversation. Ask "show me the beach trip from 2024," and a live grid appears that you can scroll, switch to carousel, or open full-screen — all inline, with no context switch to another application. That's the core of what makes Woof different: not a smarter query, but not losing the thread when you go to actually look at the results.
 
-<video controls width="100%">
+<video controls width="100%" poster="{{ '/assets/screenshot_2026-07-10.jpg' | relative_url }}">
   <source src="{{ '/assets/Woof_Search_Browse_2026-07-10.mp4' | relative_url }}" type="video/mp4">
 </video>
 
