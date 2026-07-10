@@ -3,7 +3,8 @@
     "allow": [
       "Bash(.venv/bin/pytest tests/ -q)",
       "WebFetch(domain:ouestcharlie.github.io)",
-      "Bash(bundle exec *)"
+      "Bash(bundle exec *)",
+      "Bash(curl -s \"https://ouestcharlie.github.io/ouestcharlie/\")"
     ]
   },
   "enabledPlugins": {

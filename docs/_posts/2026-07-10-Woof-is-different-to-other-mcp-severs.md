@@ -43,7 +43,9 @@ Woof can combine many facets (date, rating, dimensions, orientation, tags, GPS, 
 
 Woof's gallery is an MCP App — an interactive view rendered directly inside the Claude conversation. Ask "show me the beach trip from 2024," and a live grid appears that you can scroll, switch to carousel, or open full-screen — all inline, with no context switch to another application. That's the core of what makes Woof different: not a smarter query, but not losing the thread when you go to actually look at the results.
 
-<!-- TODO: embed screencast of a real search → browse → refine session here -->
+<video controls width="100%">
+  <source src="{{ '/assets/Woof_Search_Browse_2026-07-10.mp4' | relative_url }}" type="video/mp4">
+</video>
 
 ## Refining What You're Looking At
 
