@@ -1,10 +1,11 @@
 {
-  "enabledPlugins": {
-    "mcp-apps@mcp-apps": true
-  },
   "permissions": {
     "allow": [
-      "Bash(.venv/bin/pytest tests/ -q)"
+      "Bash(.venv/bin/pytest tests/ -q)",
+      "WebFetch(domain:ouestcharlie.github.io)"
     ]
+  },
+  "enabledPlugins": {
+    "mcp-apps@mcp-apps": true
   }
 }

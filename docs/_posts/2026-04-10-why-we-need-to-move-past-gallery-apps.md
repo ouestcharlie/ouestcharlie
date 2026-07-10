@@ -98,11 +98,11 @@ If you prefer a manual setup or use a different AI client (ChatGPT Desktop, Goos
 
 Once Woof is connected, tell your AI assistant where your photos live:
 
-> *"Add a local backend to Woof pointing to /Users/your-name/Pictures"*
+> *"Add a local library to Woof pointing to /Users/your-name/Pictures"*
 
 Then kick off indexing:
 
-> *"Index my local backend"*
+> *"Index my local library"*
 
 Woof reads your library as-is — no migration, no reorganization. It writes XMP sidecar files next to your originals (never touching the originals themselves) and builds a fast metadata index. Expect roughly 10–100 seconds per thousand photos.
 
@@ -122,4 +122,4 @@ The gallery panel appears inline in your conversation with matching results. You
 
 [Get Woof on GitHub](https://github.com/ouestcharlie/ouestcharlie-woof) — see the [README](https://github.com/ouestcharlie/ouestcharlie-woof#readme) for full install and usage details.
 
-<p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof" height="600"></p>
+<p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof photo gallery in Claude Desktop" height="600"></p>

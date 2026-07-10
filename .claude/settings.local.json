@@ -5,5 +5,8 @@
       "Bash(.venv/bin/python -m pytest:*)",
       "WebFetch(domain:modelcontextprotocol.github.io)"
     ]
+  },
+  "enabledPlugins": {
+    "claude-seo@agricidaniel-claude-seo": true
   }
 }

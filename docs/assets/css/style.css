@@ -1,0 +1,18 @@
+.oec-header {
+  border-bottom: 3px solid #2a6ebb;
+}
+
+.oec-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.oec-brand-logo {
+  height: 32px;
+  width: auto;
+}
+
+.oec-footer {
+  border-top: 3px solid #2a6ebb;
+}
