@@ -2,6 +2,7 @@
 layout: post
 title: "Step by Step install of OuEstCharlie Woof in Claude Desktop"
 date: 2026-05-13
+image: /assets/ClaudeHowTo/016.png
 categories: [howto]
 ---
 
@@ -85,7 +86,7 @@ On macOS, an additional permission prompt may appear:
 
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/014.png" | relative_url }}" alt="Allow Woof to access document files in Claude Desktop" max-height="600"></p>
 
-Durign the indexing, a progress bar is shown as well as details of the last indexed partitions. When indexing is complete, the UI displays a summary of the library and the indexing results:
+While indexing is running, a progress bar is shown as well as details of the last indexed partitions. When indexing is complete, the UI displays a summary of the library and the indexing results:
 
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/015b.jpg" | relative_url }}" alt="Indexing summary in Claude Desktop" max-height="600"></p>
 

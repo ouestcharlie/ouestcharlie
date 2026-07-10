@@ -3,6 +3,7 @@ layout: post
 title: "Why It's Time to Move Past iPhoto, Google Photos, and OneDrive"
 date: 2026-04-10
 last_modified_at: 2026-07-10
+image: /assets/screenshot_2026-04-11.jpg
 categories: [vision]
 ---
 

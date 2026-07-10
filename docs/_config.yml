@@ -12,6 +12,9 @@ permalink: /:year/:month/:day/:title/
 markdown: kramdown
 highlighter: rouge
 
+twitter:
+  card: summary_large_image
+
 plugins:
   - jekyll-feed
   - jekyll-seo-tag
