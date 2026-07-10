@@ -27,11 +27,11 @@ None of them render a live, interactive photo gallery inside the AI conversation
 
 | MCP server | Search | Browse in-chat | No credential sharing |
 |---|---|---|---|
-| **Woof** | Structured facets (date, rating, dimensions, orientation, tags, GPS, camera make/model/lens, ISO/aperture/shutter/focal length) + full-text search on description, AND/OR-combinable | ✅ Inline MCP App (grid/carousel/full-screen), rendered live in the conversation | ✅ Local-only, STDIO |
+| **Woof** | 🟡 Full-text search on description + structured facets (date, rating, dimensions, orientation, tags, GPS, camera make/model/lens, ISO/aperture/shutter/focal length) | ✅ Inline MCP App (grid/carousel/full-screen), rendered live in the conversation | ✅ Local-only, STDIO |
 | drolosoft/immich-photo-manager | ✅ Semantic (CLIP) + geo/temporal | 🟡 Generates a separate HTML gallery page, not inline | ❌ Immich instance API key |
 | barryw/ImmichMCP | ✅ Semantic (CLIP) + metadata filters | ❌ JSON + URLs only, no gallery | ❌ Immich instance API key |
-| sweetrb/apple-photos-mcp | Structured filters (date/album/keyword/person) | ❌ JSON only, view in Photos.app or export | ✅ Local-only, no credentials |
-| savethepolarbears/google-photos-mcp | ✅ Text search + structured filters | 🟡 Picker API opens Google's picker in the browser, not inline | ❌ Google OAuth client ID/secret |
+| sweetrb/apple-photos-mcp | Structured facets (date/album/keyword/person) | ❌ JSON only, view in Photos.app or export | ✅ Local-only, no credentials |
+| savethepolarbears/google-photos-mcp | ✅ Text search + structured facets | 🟡 Picker API opens Google's picker in the browser, not inline | ❌ Google OAuth client ID/secret |
 
 A note on that last column: the two Immich-backed servers need an API key for the user's **own self-hosted** Immich instance — a smaller trust boundary than handing OAuth credentials to a third-party cloud API, even though both count as "a credential the MCP server holds."
 
