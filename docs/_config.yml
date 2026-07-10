@@ -7,6 +7,9 @@ theme: minima
 
 author: OuEstCharlie
 
+logo: /assets/woof_large_850.png
+image: /assets/woof_large_850.png
+
 permalink: /:year/:month/:day/:title/
 
 markdown: kramdown

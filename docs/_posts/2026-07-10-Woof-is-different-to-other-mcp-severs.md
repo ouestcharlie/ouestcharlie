@@ -1,196 +1,68 @@
-<!--
-OUTLINE — not drafted yet. Edit freely, discuss in chat, then we'll draft prose section by section.
--->
+---
+layout: post
+title: "Woof Is Different From Other Photo MCP Servers"
+date: 2026-07-10
+image: /assets/woof_large_850.png
+categories: [comparison]
+---
 
-# Title (working): Woof Is Different From Other Photo MCP Servers
+You can already ask an AI assistant to "find my photos from Spain." Most photo MCP servers either stop there — you get a list of filenames or paths back as text — or you have to switch to another app to actually look at anything. Woof's difference isn't where your photos live; it's what happens the moment after the search: you *see* them, browse them, flip through them, without ever leaving the conversation.
 
-## Revised thesis (per discussion)
-Main point is NOT the backend — Woof V1 is local-only today, which is
-honestly a current weakness vs. multi-backend competitors, not a
-strength to lead with. The real differentiator is the **integration
-with Claude for both search AND browsing** in the same conversational
-surface: ask in natural language, then actually look at and navigate
-the results (grid/carousel/full-screen) without leaving the chat.
-Competitors typically do one or the other, not both, in one place.
+---
 
-## 1. Hook
-You can already ask an AI assistant to "find my photos from Spain."
-Most photo MCP servers either stop there — you get a list of filenames or
-paths back as text — or you need to switch to another UI. 
-Woof's difference isn't where your photos live;
-it's what happens the moment after the search: you *see* them, browse
-them, flip through them, without leaving the conversation.
+## The Landscape Today
 
-## 2. The landscape today
-As of today, none of Apple, Google, Microsoft, or Amazon has released
-an official MCP server for their own photo product (Photos, Google
-Photos, OneDrive, Amazon Photos) — every server discussed below is a
-third-party/community project reverse-engineering the vendor's app or
-API, not a vendor-blessed integration. Worth keeping in mind for the
-credential-sharing point in section 6: where a credential is required,
-it's being handed to a community project, not the platform owner.
+As of today, none of Apple, Google, Microsoft, or Amazon has released an official MCP server for their own photo product — not Photos, not Google Photos, not OneDrive, not Amazon Photos. Every server below is a third-party project reverse-engineering the vendor's app or API, not a vendor-blessed integration. Worth keeping in mind whenever a server asks you to hand over a credential: you're trusting a community project with it, not the platform owner. [Google's own official MCP servers](https://cloud.google.com/blog/products/ai-machine-learning/announcing-official-mcp-support-for-google-services) cover Workspace and Cloud services, not Google Photos. [Apple's official MCP servers](https://thenewstack.io/safari-mcp-platform-infrastructure/) are Safari/WebKit developer tools, not Photos. [Microsoft ships an official OneDrive/SharePoint MCP server](https://github.com/microsoft/mcp), but it's general file management, not a photo-specific search-and-browse surface. AWS's [official MCP servers](https://awslabs.github.io/mcp/) are cloud infrastructure — nothing for Amazon Photos.
 
-Verified against each project's README (see **References** at the end)
-on 2026-07-10 — framed around search vs. browsing, not backend
-architecture:
-- **[drolosoft/immich-photo-manager](https://github.com/drolosoft/immich-photo-manager)**
-  — CLIP-based natural-language search over an Immich library, plus
-  geographic/temporal album curation. Notably, it *does* produce a
-  browsable surface: a "self-contained HTML page with embedded
-  thumbnails" it generates on request — closer to Woof than most
-  competitors, but it's a generated artifact you open separately
-  (a file or a browser tab), not a view rendered live inside the
-  conversation the way an MCP App is.
-- **[barryw/ImmichMCP](https://github.com/barryw/ImmichMCP)** — same
-  Immich backend, CLIP semantic search plus structured metadata
-  filters, but results come back as JSON with thumbnail/download URLs
-  only; no gallery generation — the client (or user) has to render
-  or open them.
-- **[sweetrb/apple-photos-mcp](https://github.com/sweetrb/apple-photos-mcp)**
-  — queries the macOS Photos library via `osxphotos`. Search is
-  structured-filter only (date range, album, keyword, person,
-  favorite/hidden, title/description substring) — no semantic/CLIP
-  search. Fully local, no credentials of any kind. Results are
-  JSON summaries; actually viewing a photo means opening it in
-  Photos.app or exporting it to disk.
-- **[savethepolarbears/google-photos-mcp](https://github.com/savethepolarbears/google-photos-mcp)**
-  — broader than pure metadata filtering: `search_photos` is a
-  text-based search against the Google Photos Library API (leaning on
-  Google's own backend categorization), plus a separate
-  `search_media_by_filter` tool for structured filters (date, category,
-  media type, favorites, archived), plus location search. Also ships a
-  "Picker API" flow that opens the *user's browser* to Google's own
-  picker UI to select photos — a real browsing surface, just not one
-  rendered inside the AI conversation. Requires a Google Cloud OAuth
-  client ID/secret and a full OAuth consent flow; tokens are cached in
-  the OS keychain.
+That leaves a handful of community projects, each solving a different slice of the problem:
 
-What they share: none render a live, interactive photo gallery inside
-the AI conversation itself. The closest is
-drolosoft/immich-photo-manager's generated HTML gallery, and even
-that's a separate artifact rather than an in-conversation MCP App.
+- **[drolosoft/immich-photo-manager](https://github.com/drolosoft/immich-photo-manager)** — CLIP-based natural-language search over a self-hosted Immich library, plus geographic and temporal album curation. Notably, it *does* produce a browsable surface: on request, it generates a self-contained HTML page with embedded thumbnails — closer to Woof than most competitors, but it's a file you open separately, not a view rendered live inside the conversation.
+- **[barryw/ImmichMCP](https://github.com/barryw/ImmichMCP)** — the same Immich backend, with CLIP semantic search and structured metadata filters, but results come back as JSON with thumbnail/download URLs only. No gallery generation — you or your client has to render them.
+- **[sweetrb/apple-photos-mcp](https://github.com/sweetrb/apple-photos-mcp)** — queries the macOS Photos library directly via `osxphotos`. Search is structured filters only — date range, album, keyword, person, favorite/hidden, title/description substring — no semantic or visual search. It's fully local with no credentials of any kind, but viewing a photo still means opening it in Photos.app or exporting it to disk.
+- **[savethepolarbears/google-photos-mcp](https://github.com/savethepolarbears/google-photos-mcp)** — broader than pure metadata filtering: a genuine text search against the Google Photos API (leaning on Google's own backend categorization), plus structured filters and location search. It also ships a Picker API flow that opens *your browser* to Google's own picker UI — a real browsing surface, just not one rendered inside the AI conversation. And it requires a Google Cloud OAuth client ID and secret, plus a full consent flow, before any of it works.
 
-### Comparison table
+None of them render a live, interactive photo gallery inside the AI conversation itself. The closest is immich-photo-manager's generated HTML gallery — and even that's a separate artifact, not something rendered live where you're chatting.
+
+### How they stack up
 
 | MCP server | Search | Browse in-chat | No credential sharing |
 |---|---|---|---|
 | **Woof** | Structured facets (date, rating, dimensions, orientation, tags, GPS, camera make/model/lens, ISO/aperture/shutter/focal length) + full-text search on description, AND/OR-combinable | ✅ Inline MCP App (grid/carousel/full-screen), rendered live in the conversation | ✅ Local-only, STDIO |
-| drolosoft/immich-photo-manager | ✅ Semantic (CLIP) + geo/temporal | 🟡 Generates a separate HTML gallery page, not inline in the conversation | ❌ Immich instance API key |
+| drolosoft/immich-photo-manager | ✅ Semantic (CLIP) + geo/temporal | 🟡 Generates a separate HTML gallery page, not inline | ❌ Immich instance API key |
 | barryw/ImmichMCP | ✅ Semantic (CLIP) + metadata filters | ❌ JSON + URLs only, no gallery | ❌ Immich instance API key |
 | sweetrb/apple-photos-mcp | Structured filters (date/album/keyword/person) | ❌ JSON only, view in Photos.app or export | ✅ Local-only, no credentials |
-| savethepolarbears/google-photos-mcp | ✅ Text search + structured filters (Google backend) | 🟡 Picker API opens Google's own picker in the browser, not inline | ❌ Google OAuth client ID/secret |
+| savethepolarbears/google-photos-mcp | ✅ Text search + structured filters | 🟡 Picker API opens Google's picker in the browser, not inline | ❌ Google OAuth client ID/secret |
 
-Note on "credential sharing": the two Immich-backed servers require an
-API key for the user's **own self-hosted** Immich instance — a
-different trust boundary than handing OAuth credentials to a
-third-party cloud API (Google Photos MCP), even though both count as
-"a credential the MCP server holds" in this table.
+A note on that last column: the two Immich-backed servers need an API key for the user's **own self-hosted** Immich instance — a smaller trust boundary than handing OAuth credentials to a third-party cloud API, even though both count as "a credential the MCP server holds."
 
-Framed around the axes that matter — search, browse in one surface,
-and credential exposure — rather than backend architecture. Woof is
-the only one with a live in-conversation gallery. Its search is
-richer than "filter-based" implies: a wide structured-facet set
-(Wally's `search_photos`, backed by a LanceDB index — see
-`ouestcharlie-wally/src/wally/searcher.py` and
-`ouestcharlie-py-toolkit/src/ouestcharlie_toolkit/fields.py`) *plus*
-genuine full-text search over the description field (LanceDB FTS,
-BM25-ranked, not substring matching), all AND/OR-combinable. What it
-still lacks is CLIP/embedding-based *visual* semantic search — "find
-photos that look like a sunset" without a matching keyword/tag/
-description — which the Immich-backed competitors have. That's the
-honest weakness in section 7, refined to be specific rather than
-just "filter-based."
-
-## 3. Difference 1 — Search AND browse in one surface
-Woof's gallery is an MCP App — an interactive view rendered inside the
-Claude conversation itself. A search ("show me the beach trip in
-2024") returns a live grid the user can scroll, switch to carousel,
-open full-screen — all inline, no context switch to another
-application. This is the core claim of the article.
-
-## 4. Difference 2 — Conversational refinement of what you're browsing
-Because search and browsing share the same surface, the user can
-narrow/broaden/pivot the query conversationally while looking at
-results ("now just the ones with Mia", "zoom into that one", "go back
-a week") — vs. competitors where a text-only tool response can't be
-refined by pointing at what's on screen, because nothing is on screen.
-
-## 5. Difference 3 — A crowd of agents behind one experience
-Brief, secondary point: Woof mediates stateless agents (Wally for
-query/browse, Whitebeard for ingestion) behind this single experience,
-so the search+browse surface can grow (enrichment, memories) without
-becoming a monolith. Keep this short — supporting detail, not the
-headline.
-
-## 6. Difference 4 — No credential sharing
-Several competitors require handing the MCP server a credential:
-Google Photos MCP needs a Google Cloud OAuth client ID/secret plus a
-full consent flow; the two Immich-backed servers need an API key for
-your Immich instance (a smaller trust boundary since that's usually
-self-hosted, but still a credential the MCP process holds). Woof is
-local-only: no API keys to generate, share, or revoke — the assistant
-talks to a local MCP server over STDIO, and there's no credential to
-leak because none exists.
-
-## 7. Honest weaknesses — backend, semantic search, and feature gaps
-Say directly: Woof V1 only supports local/mounted drives; Immich-based
-competitors already support a real multi-user server. On search,
-Woof's structured facets + full-text description search cover a lot
-of ground, but it's not CLIP/embedding-based visual semantic search —
-"sunset at the beach" only works if that language shows up in tags,
-keywords, or the description; Immich-backed competitors search the
-actual pixel content. Don't oversell — this is a roadmap gap, not a
-hidden strength. Cloud backends and visual semantic search are open
-points, not solved. Also no editing, no enrichment agents
-(faces/scenes) yet, index mode only. Keep short.
-
-## 8. Closing
-Through-line: Woof optimizes the *experience* of asking and then looking — search and browsing
-unified in the conversation. More to come as enrichment agents and more backends will be supported.
+Woof is the only one with a live in-conversation gallery. Its search is also richer than "filter-based" suggests: a wide set of structured facets, backed by a local index, plus genuine full-text search over the description field — ranked, not just substring matching — all combinable with AND/OR. What it doesn't have yet is CLIP-style *visual* semantic search: finding a photo because it looks like a sunset, not because the word "sunset" appears somewhere in its tags or description. More on that below.
 
 ---
 
-## References
-Landscape claims (search mechanism, browsing surface, credential
-model) were verified directly against each project's README via the
-GitHub API on 2026-07-10. Re-check before publishing if drafting is
-delayed — these are actively developed projects and behavior can
-change:
-- [drolosoft/immich-photo-manager](https://github.com/drolosoft/immich-photo-manager) — README
-- [barryw/ImmichMCP](https://github.com/barryw/ImmichMCP) — README
-- [sweetrb/apple-photos-mcp](https://github.com/sweetrb/apple-photos-mcp) — README
-- [savethepolarbears/google-photos-mcp](https://github.com/savethepolarbears/google-photos-mcp) — README
+## Search and Browse, in One Place
 
-No official vendor MCP server for a photo product (verified via web
-search on 2026-07-10; re-check periodically, this changes fast):
-- [Announcing official MCP support for Google services](https://cloud.google.com/blog/products/ai-machine-learning/announcing-official-mcp-support-for-google-services) — Google's official MCP servers cover Workspace/Cloud services; no Google Photos
-- [Apple just turned Safari into something AI agents can control](https://thenewstack.io/safari-mcp-platform-infrastructure/) — Apple's official MCP servers are Safari/WebKit devtools; no Photos
-- [microsoft/mcp — Catalog of official Microsoft MCP servers](https://github.com/microsoft/mcp) — official OneDrive/SharePoint MCP server exists (general file management), no Photos-specific server
-- [Welcome to Open Source MCP Servers for AWS](https://awslabs.github.io/mcp/) — AWS official MCP servers are cloud infrastructure (MSK, Lambda, ECS, EKS); no Amazon Photos
+Woof's gallery is an MCP App — an interactive view rendered directly inside the Claude conversation. Ask "show me the beach trip from 2024," and a live grid appears that you can scroll, switch to carousel, or open full-screen — all inline, with no context switch to another application. That's the core of what makes Woof different: not a smarter query, but not losing the thread when you go to actually look at the results.
 
-Woof's own search facets/behavior are verified against the current
-source, not docs: `ouestcharlie-wally/src/wally/searcher.py`
-(`search_photos`, `FilterGroup`/`FilterLeaf` AND/OR composition, FTS
-query path) and `ouestcharlie-py-toolkit/src/ouestcharlie_toolkit/fields.py`
-(`PHOTO_FIELDS` facet definitions: dateTaken, rating, width/height,
-orientation, tags, make/model/lensModel, gps, description, isoSpeed,
-aperture, exposureTime, focalLength/focalLength35mm, directory).
+<!-- TODO: embed screencast of a real search → browse → refine session here -->
 
-## Production notes
-- We will add a screencast showing a real session (search → browse →
-  refine) to make the core differentiator (section 3/4) tangible —
-  placement TBD, likely embedded near section 3 or in the closing.
+## Refining What You're Looking At
 
-## Open questions for discussion
-- Add a short concrete example/transcript showing search→browse→refine
-  in one flow, to make the differentiator tangible? (may be superseded
-  by the screencast above)
-- ~~Do we still want a comparison table, now framed as "search only" vs
-  "search + browse" vs "browse only" rather than backend architecture?~~
-  Resolved — added under section 2, framed as search / browse / API
-  key sharing.
-- The outline previously listed a "Generic semantic-image-search MCPs
-  (CLIP+FAISS style)" category with no named project. Removed from
-  section 2/table since it couldn't be attributed to a specific,
-  verifiable repo — re-add only with a concrete project to cite, or
-  keep the comparison scoped to the four named/verified competitors.
+Because search and browsing live in the same surface, you can narrow, broaden, or pivot the query conversationally while looking at what's on screen: "now just the ones with Mia," "zoom into that one," "go back a week." Competitors whose tool response is text can't support this — there's nothing on screen to point at.
+
+## A Crowd of Agents Behind One Experience
+
+Under the hood, Woof mediates a set of stateless agents — Wally handles query and browse, Whitebeard handles ingestion — behind this single conversational surface. That means the search-and-browse experience can keep growing (enrichment, memories, more agents) without the whole system becoming a monolith.
+
+## No Credential Sharing
+
+Several competitors require handing the MCP server a credential: Google Photos MCP needs a Google Cloud OAuth client ID and secret plus a full consent flow; the two Immich-backed servers need an API key for your Immich instance (a smaller trust boundary, since that's usually self-hosted, but still a credential the process holds). Woof is local-only — there are no API keys to generate, share, or revoke. The assistant talks to a local MCP server over STDIO, and there's no credential to leak because none exists.
+
+## Where Woof Still Trails
+
+To be direct about it: Woof V1 only supports local and mounted drives. The Immich-backed competitors already run against a real, self-hosted multi-user server — a legitimate advantage if your library lives there. And while Woof's structured facets plus full-text description search cover a lot of ground, it isn't CLIP-style visual semantic search. "Sunset at the beach" only finds something if that language shows up in a tag, a keyword, or the description — Immich-backed competitors search the actual pixel content of the photo. Woof also doesn't yet support editing, or enrichment agents for faces and scenes; today it's index-and-search only. None of this is a hidden strength dressed up as a weakness — it's the honest roadmap.
+
+## What's Next
+
+Woof optimizes the *experience* of asking and then looking — search and browsing unified in one conversation, instead of a query that dumps you into a separate app to see the results. Backend breadth and visual semantic search are on the roadmap, not solved yet.
+
+{% include tryitnow.md %}
