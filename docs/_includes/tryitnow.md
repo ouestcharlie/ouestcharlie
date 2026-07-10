@@ -50,3 +50,9 @@ The gallery panel appears inline in your conversation with matching results. You
 [Get Woof on GitHub](https://github.com/ouestcharlie/ouestcharlie-woof) — see the [README](https://github.com/ouestcharlie/ouestcharlie-woof#readme) for full install and usage details.
 
 <p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof photo gallery in Claude Desktop" height="600"></p>
+
+## It does not work
+
+First check the [step by step install guide]({{ "/2026/05/13/claude-how-to-step-by-step/" | relative_url }}).
+
+If your problem remains unsolved after going through this guide, please [file an issue on the Woof GitHub repository](https://github.com/ouestcharlie/ouestcharlie-woof/issues) — include the logs above and a description of what you tried.

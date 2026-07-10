@@ -12,6 +12,9 @@ permalink: /:year/:month/:day/:title/
 markdown: kramdown
 highlighter: rouge
 
+sass:
+  quiet_deps: true
+
 twitter:
   card: summary_large_image
 

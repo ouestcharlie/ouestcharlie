@@ -109,3 +109,5 @@ If install based on the bundle (.mcpb file) fails, you will need to edit the dev
 If Claude is unable to use the Woof MCP tools, inspect the logs. From **Settings → Developer**, select the Woof logs. A successful install should produce output similar to this screenshot:
 
 <p align="center"><img src="{{ "/assets/ClaudeHowTo/031.png" | relative_url }}" alt="Woof install logs in Claude Desktop" max-height="600"></p>
+
+If your problem remains unsolved after going through this guide, please [file an issue on the Woof GitHub repository](https://github.com/ouestcharlie/ouestcharlie-woof/issues) — include the logs above and a description of what you tried.
