@@ -51,7 +51,7 @@ The gallery panel appears inline in your conversation with matching results. You
 
 <p align="center"><img src="{{ "/assets/screenshot_2026-04-11.jpg" | relative_url }}" alt="Woof photo gallery in Claude Desktop" height="600"></p>
 
-## It does not work
+## If it does not work
 
 First check the [step by step install guide]({{ "/2026/05/13/claude-how-to-step-by-step/" | relative_url }}).
 
