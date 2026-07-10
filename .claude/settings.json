@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(.venv/bin/pytest tests/ -q)",
-      "WebFetch(domain:ouestcharlie.github.io)"
+      "WebFetch(domain:ouestcharlie.github.io)",
+      "Bash(bundle exec *)"
     ]
   },
   "enabledPlugins": {

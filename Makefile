@@ -25,7 +25,7 @@ define each_repo
 	done
 endef
 
-.PHONY: branch checkout pull commit push tag sync test pr bump
+.PHONY: branch checkout pull commit push tag sync test pr bump blog-serve
 
 ## Create a new branch: make branch REPOS=1111 NAME=<branch-name>
 branch:
@@ -92,3 +92,7 @@ bump:
 		i=$$((i+1)); \
 	done
 	$(call each_repo,uv sync)
+
+## Serve the Jekyll blog locally with baseurl override: make blog-serve
+blog-serve:
+	cd docs && bundle exec jekyll serve --config _config.yml,_config_dev.yml --livereload
