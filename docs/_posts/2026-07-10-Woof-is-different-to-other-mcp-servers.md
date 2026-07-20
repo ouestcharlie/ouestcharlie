@@ -77,6 +77,10 @@ Woof optimizes the *experience* of asking and then looking — search and browsi
 
 ---
 
+{% include tryitnow.md %}
+
+---
+
 ## References
 
 - [Google's official MCP servers](https://cloud.google.com/blog/products/ai-machine-learning/announcing-official-mcp-support-for-google-services) cover Workspace and Cloud services, not Google Photos.
@@ -85,7 +89,3 @@ Woof optimizes the *experience* of asking and then looking — search and browsi
 - AWS's [official MCP servers](https://awslabs.github.io/mcp/) are cloud infrastructure — nothing for Amazon Photos.
 
 Metadata-editing capabilities (see the comparison table above) are drawn from the same READMEs already linked in **The Landscape Today**: drolosoft/immich-photo-manager's "Highlights" section (tags, bulk rotation, metadata repair, trash lifecycle, face merge), barryw/ImmichMCP's Albums/People/Tags/Activities tool tables, sweetrb/apple-photos-mcp's explicit "Read-only against the Photos library" banner, and savethepolarbears/google-photos-mcp's "Write operations" list (album-level only, no per-photo fields).
-
----
-
-{% include tryitnow.md %}
