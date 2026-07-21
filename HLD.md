@@ -115,9 +115,9 @@ When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/
 │   │   ├── .ouestcharlie/
 │   │   │   └── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif
 │   │   ├── DSC_001.jpg
-│   │   ├── DSC_001.xmp                     ← generated at indexing (EXIF extraction)
+│   │   ├── DSC_001.jpg.xmp                 ← generated at indexing (EXIF extraction)
 │   │   ├── DSC_002.jpg
-│   │   ├── DSC_002.xmp
+│   │   ├── DSC_002.jpg.xmp
 │   │   └── ...
 │   └── Japan 2024/
 │       ├── .ouestcharlie/
@@ -145,7 +145,7 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
 │   │   ├── .ouestcharlie/
 │   │   │   └── thumbnails-Kf3QzA2_nBcR8xYvLm1P9w.avif
 │   │   ├── IMG_001.jpg
-│   │   ├── IMG_001.xmp
+│   │   ├── IMG_001.jpg.xmp
 │   │   └── ...
 │   ├── 2024-07/
 │   │   ├── .ouestcharlie/
@@ -167,7 +167,7 @@ photos/                                                          ← bucket pref
 ├── .ouestcharlie/index.lance/                                    ← LanceDB columnar index
 ├── 2024/2024-01/.ouestcharlie/thumbnails-Kf3QzA2_nBcR8x….avif
 ├── 2024/2024-01/IMG_001.jpg
-├── 2024/2024-01/IMG_001.xmp
+├── 2024/2024-01/IMG_001.jpg.xmp
 ├── 2024/2024-07/.ouestcharlie/thumbnails-aB1cD2eF3gH4i5….avif
 ├── 2024/2024-07/IMG_001.jpg
 └── ...
@@ -200,6 +200,8 @@ Photos are organized in folders (partitions). Each folder that directly contains
 
 - **Photo files**: the original images (immutable)
 - **Sidecar XMP files**: per-photo metadata (extracted EXIF + enrichments) in standard XMP format
+
+**Sidecar naming**: OuEstCharlie always writes new sidecars with the photo's extension kept in the filename (`IMG_001.cr3` → `IMG_001.cr3.xmp`), matching Darktable, digiKam, and Immich's preferred convention, and avoiding the collision risk where two photos sharing a stem but differing only in extension (`photo.cr3`, `photo.jpg`) would otherwise resolve to the same sidecar. When reading, OuEstCharlie looks for the full-extension sidecar first and falls back to the extension-stripped form (`IMG_001.xmp`, as written by Lightroom) if that's what's present — this is not a hard rename, so libraries with existing stripped-extension sidecars keep working, and edits to those sidecars are written back in place rather than forking a duplicate under the new name.
 
 The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 
@@ -276,9 +278,9 @@ See [HLD_rationale.md § Thumbnail Storage](HLD_rationale.md#thumbnail-storage) 
 │   │       ├── Kf3QzA2_nBcR8x....jpg ← 1440px JPEG per photo (lazy, generated on demand)
 │   │       └── aB1cD2eF3gH4i5....jpg
 │   ├── IMG_001.jpg
-│   ├── IMG_001.xmp
+│   ├── IMG_001.jpg.xmp
 │   ├── IMG_002.heic
-│   ├── IMG_002.xmp
+│   ├── IMG_002.heic.xmp
 │   └── ...
 ├── 2024-08/
 │   └── ...
