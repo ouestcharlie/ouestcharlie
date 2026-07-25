@@ -1,12 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/bin/pytest tests/ -q)",
+      "Bash(.venv/bin/pytest:*)",
       "WebFetch(domain:ouestcharlie.github.io)",
       "Bash(bundle exec *)",
-      "Bash(curl -s \"https://ouestcharlie.github.io/ouestcharlie/\")",
-      "Bash(.venv/bin/pytest tests/*)",
-      "Bash(.venv/bin/pytest tests/test_http_server.py -v)"
+      "Bash(curl -s \"https://ouestcharlie.github.io/ouestcharlie/\")"
     ]
   },
   "enabledPlugins": {
