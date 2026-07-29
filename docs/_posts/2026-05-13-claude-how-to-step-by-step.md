@@ -34,14 +34,14 @@ The simplest way to install Woof is through the MCP bundle included in the [Woof
 
 If double-clicking the `ouestcharlie-woof-x.y.z.mcpb` file does not open Claude, you can install it directly from the Claude Desktop settings by clicking the **Extensions** tab:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/021.png" | relative_url }}" alt="Select Extension in Claude Desktop Settings" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/021.png" alt="Select Extension in Claude Desktop Settings" %}
 
 Enable **Advanced Settings**, then click **Install Extension**. In the file browser dialog, select the `ouestcharlie-woof-x.y.z.mcpb` file and follow the install steps described above.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/022.png" | relative_url }}" alt="Install Extension in Claude Desktop Settings" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/022.png" alt="Install Extension in Claude Desktop Settings" %}
 
 <!--
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/001.png" | relative_url }}" alt="Open the Woof MCP bundle in Claude Desktop" height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/001.png" alt="Open the Woof MCP bundle in Claude Desktop" %}
 
 If Claude is not launched by the double-click, see the section "Alternate bundle install from the Claude settings" below.
 
@@ -50,21 +50,21 @@ Review the dialog and confirm the install by clicking **Install**.
 
 A second confirmation step is required:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/002.png" | relative_url }}" alt="Validate Woof install in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/002.png" alt="Validate Woof install in Claude Desktop" %}
 
 Once successful, the Woof extension appears as enabled:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/003.png" | relative_url }}" alt="Woof extension is enabled in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/003.png" alt="Woof extension is enabled in Claude Desktop" %}
 
 ## First steps in Claude Desktop
 
 You can verify that Woof is correctly installed by asking Claude: "Is OuEstCharlie Woof loaded?" Claude may ask you to authorize listing libraries — see below for details.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/010.png" | relative_url }}" alt="Check if Woof is loaded in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/010.png" alt="Check if Woof is loaded in Claude Desktop" %}
 
 Before searching and browsing photos, you need to point Woof to your photo library. This is done by creating a **library**, which consists of a nickname and the path to your photo library on your local drive.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/011.png" | relative_url }}" alt="Define a Woof library in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/011.png" alt="Define a Woof library in Claude Desktop" %}
 
 Supported drive types are:
 - *filesystem*: any local or local-area network drive
@@ -76,19 +76,19 @@ Creating a library will require your confirmation.
 
 > It is recommended to allow only once for commands that modify your drive — such as *create library* and *index library*. For read-only commands like *list libraries*, *list search fields*, *search*, or *browse*, you can allow permanently.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/012.png" | relative_url }}" alt="Allow creation of a Woof library in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/012.png" alt="Allow creation of a Woof library in Claude Desktop" %}
 
 Once the library has been added, the next step is to index its contents. Indexing extracts metadata (date, GPS location, dimensions, tags, etc.) and generates optimized thumbnails. Depending on library size, drive throughput, and machine performance, this may take several minutes. Typical indexing speed is 500–1,500 photos/min.
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/013.png" | relative_url }}" alt="Trigger library index in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/013.png" alt="Trigger library index in Claude Desktop" %}
 
 On macOS, an additional permission prompt may appear:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/014.png" | relative_url }}" alt="Allow Woof to access document files in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/014.png" alt="Allow Woof to access document files in Claude Desktop" %}
 
 While indexing is running, a progress bar is shown as well as details of the last indexed partitions. When indexing is complete, the UI displays a summary of the library and the indexing results:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/015b.jpg" | relative_url }}" alt="Indexing summary in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/015b.jpg" alt="Indexing summary in Claude Desktop" %}
 
 Claude and Woof are ready to start photo search and browsing.
 
@@ -96,7 +96,7 @@ Claude and Woof are ready to start photo search and browsing.
 
 You can now search and browse your library using Claude's prompt for queries, and the Woof UI to explore results — either inline in the chat or in full-screen:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/016.png" | relative_url }}" alt="Search and Browse using Woof in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/016.png" alt="Search and Browse using Woof in Claude Desktop" %}
 
 ---
 
@@ -108,6 +108,6 @@ If install based on the bundle (.mcpb file) fails, you will need to edit the dev
 
 If Claude is unable to use the Woof MCP tools, inspect the logs. From **Settings → Developer**, select the Woof logs. A successful install should produce output similar to this screenshot:
 
-<p align="center"><img src="{{ "/assets/ClaudeHowTo/031.png" | relative_url }}" alt="Woof install logs in Claude Desktop" max-height="600"></p>
+{% include post-image.html src="/assets/ClaudeHowTo/031.png" alt="Woof install logs in Claude Desktop" %}
 
 If your problem remains unsolved after going through this guide, please [file an issue on the Woof GitHub repository](https://github.com/ouestcharlie/ouestcharlie-woof/issues) — include the logs above and a description of what you tried.

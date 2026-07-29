@@ -25,7 +25,7 @@ define each_repo
 	done
 endef
 
-.PHONY: branch checkout pull commit push tag sync test pr bump blog-serve
+.PHONY: branch checkout pull commit push tag sync sync-upgrade test pr bump blog-serve
 
 ## Create a new branch: make branch REPOS=1111 NAME=<branch-name>
 branch:
@@ -59,6 +59,10 @@ tag:
 ## Sync dependencies: make sync REPOS=1111
 sync:
 	$(call each_repo,uv sync)
+
+## Upgrade dependencies
+sync-upgrade:
+	$(call each_repo,uv sync --upgrade)
 
 ## Run pytest: make test REPOS=1111 [ARGS="-v -k foo"]
 test:
