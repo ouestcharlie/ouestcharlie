@@ -77,5 +77,4 @@ With this tutorial, we have shown how to create a photo gallery from end to end 
 - Photos are sorted and enriched with the Strava activity log for context. The AI not only matches the photos and activities but also finds missing information and inconsistencies. Scripting this process and all the exceptions would require quite complex rules.
 - Search also benefits from the AI. Your requests are in natural language in the chat. The AI interprets and finds the best matching pictures using all available information fields.
 
-OuEstCharlie Woof is the companion app extending Claude for photo search and browsing without breaking the user experience. Today, most photo gallery integrations with Claude only wrap actions like search or album creation; the photos are at best shared with Claude one by one.
-
+OuEstCharlie Woof is the companion app extending Claude for photo search and browsing without breaking the user experience. Today, as discussed in the post ["Woof is different from other MCP servers"](./2026-07-10-Woof-is-different-to-other-mcp-servers.md), most photo gallery integrations with Claude only wrap actions like search or album creation; the photos are at best shared with Claude one by one.
