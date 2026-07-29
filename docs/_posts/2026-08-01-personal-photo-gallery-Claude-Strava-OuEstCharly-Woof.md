@@ -19,15 +19,15 @@ The Claude Desktop application is required. At the prompt footer, select the "Co
 
 Below the prompt box, click on "Folder or project", select the folder in which the photos are, and allow Claude CoWork to edit those files.
 
-# Connect to Strava
+# Sort and enrich the photos with Claude and Strava
 
-Assuming you have a subscription with Strava, from the "Customize" section of the Claude settings, select the "Connectors" tab and search or add (depending on the Claude Desktop version) the Strava connector from the marketplace. You will need to log into Strava with your credentials.
+Strava will supply the activity data used to auto-caption and organize your photos. Strava is added to Claude through a connector. Assuming you have a subscription with Strava, from the "Customize" section of the Claude settings, select the "Connectors" tab and search or add (depending on the Claude Desktop version) the Strava connector from the marketplace. You will need to log into Strava with your credentials.
  
 You may now start the photo enrichment with the following prompt that you may adapt to your taste:
 
 >I would like to sort the pictures in the project folders by date and also add a description.
 >Most of the photos are from sport outings, you can use the Strava integration to get the corresponding outing of that day.
->I usually name the photo folder with ISO dates and PascalCase for the goal of the day and, if available, the name of the persons with me.
+>I usually name the photo folder with ISO dates and PascalCase (each word capitalized, no spaces) for the goal of the day and, if available, the name of the persons with me.
 >E.g.: 2025-06-12_MontBlanc_Paul
 >Please validate the folder structure before moving any pictures. Ask if any information is missing.
 
@@ -39,7 +39,7 @@ As instructed, Claude uses the Strava connector to fetch information from the ac
 
 The first question is about how to handle a day with two activities in Strava. This actually underlines a limit of the prompt: it only requires matching the activity with the photo day, but does not specify matching the time of the day as well.
 
-As for the description enrichment, Claude asks if it should be in a separate text file within the folder or embedded in the photo's EXIF header. Let's ask for both. The photo EXIF header is used by OuEstCharlie Woof during indexing.
+As for the description enrichment, Claude asks if it should be in a separate text file within the folder or embedded in the photo's EXIF header. The Exif header is metadata within the photo files describing the camera settings, the time the picture is taken, the GPS location if available, and descriptions or tags. This is the primary source of information for all the photo gallery software, including OuEstCharlie.
 
 Claude eventually highlights that some photos do not have a matching outing, and proposes to name the corresponding folder with the ISO date only.
 
@@ -57,7 +57,7 @@ Following user validation, Claude executes the plan and provides a summary of th
 
 # Search and browse the photos in OuEstCharlie Woof
 
-Now that photos are sorted in folders and contain context information, how are they accessed and explored? This is provided by the search and browse capabilities of a photo gallery. Claude does not provide those skills, or provides them poorly: search would probably mean a traversal of all the photos; browse is through the system preview app.
+Now that photos are sorted in folders and contain context information, how are they accessed and explored? This is provided by the search and browse capabilities of a photo gallery. Search is selecting the best matching picture using metadata; it might combine several metadata fields and eventually sorts the results by relevance and the requested field. Browsing the gallery is essential for visual content like photos. It often comes as a grid following the query results, but it can also use other displays such as a geographic map. Claude does not provide those skills, or provides them poorly: search would probably mean a traversal of all the photos; browse is through the system preview app.
 
 To overcome those limits of Claude, we have created a companion app, [OuEstCharlie Woof](https://github.com/ouestcharlie/ouestcharlie-woof). Woof is extending Claude by providing instant search on folder names and photo metadata (from headers). It also augments Claude's user interface with grid or single-photo display. The user experience stays consistent with Claude: chat with the AI; it translates your intent into queries to Woof, and displays the result.
 
