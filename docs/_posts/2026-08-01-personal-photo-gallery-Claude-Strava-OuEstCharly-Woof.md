@@ -1,8 +1,8 @@
 ---
 layout: post
 title: "Create your personal photo gallery with Claude, Strava and OuEstCharlie Woof"
-date: 2026-08-01
-last_modified_at: 2026-08-01
+date: 2026-07-31
+last_modified_at: 2026-07-31
 image: /assets/screenshot_2026-04-11.jpg
 categories: [DIY, MacOs, Linux, Windows]
 ---
@@ -18,6 +18,11 @@ First import your photos from the camera or smartphone to a folder on your compu
 The Claude Desktop application is required. At the prompt footer, select the "CoWork" module. CoWork is a variant of the chat that is specialized in interacting with your information and files.
 
 Below the prompt box, click on "Folder or project", select the folder in which the photos are, and allow Claude CoWork to edit those files.
+
+<video controls width="100%" poster="{{ '/assets/Claude+Strava+Woof/CreateYourPhotoGallery_ClaudeStravaWoof-Cover.jpg' | relative_url }}">
+  <source src="{{ '/assets/Claude+Strava+Woof/CreateYourPhotoGallery_ClaudeStravaWoof.mp4' | relative_url }}" type="video/mp4">
+</video>
+
 
 # Sort and enrich the photos with Claude and Strava
 
