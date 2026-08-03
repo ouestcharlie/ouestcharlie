@@ -2,7 +2,7 @@
 layout: post
 title: "Create your personal photo gallery with Claude, Strava and OuEstCharlie Woof"
 date: 2026-07-31
-last_modified_at: 2026-07-31
+last_modified_at: 2026-08-03
 image: /assets/Claude+Strava+Woof/CreateYourPhotoGallery_ClaudeStravaWoof-Cover.jpg
 categories: [DIY, MacOs, Linux, Windows]
 ---
@@ -24,11 +24,11 @@ Below the prompt box, click on "Folder or project", select the folder in which t
 </video>
 
 
-# Sort and enrich the photos with Claude and Strava
+# Sort the photos with Claude and Strava
 
 Strava will supply the activity data used to auto-caption and organize your photos. Strava is added to Claude through a connector. Assuming you have a subscription with Strava, from the "Customize" section of the Claude settings, select the "Connectors" tab and search or add (depending on the Claude Desktop version) the Strava connector from the marketplace. You will need to log into Strava with your credentials.
  
-You may now start the photo enrichment with the following prompt that you may adapt to your taste:
+You may prompt the photo reorganization as follow, adapt to your taste:
 
 >I would like to sort the pictures in the project folders by date and also add a description.
 >Most of the photos are from sport outings, you can use the Strava integration to get the corresponding outing of that day.
