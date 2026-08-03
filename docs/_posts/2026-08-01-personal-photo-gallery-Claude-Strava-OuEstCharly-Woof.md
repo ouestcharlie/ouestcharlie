@@ -3,7 +3,7 @@ layout: post
 title: "Create your personal photo gallery with Claude, Strava and OuEstCharlie Woof"
 date: 2026-07-31
 last_modified_at: 2026-07-31
-image: /assets/screenshot_2026-04-11.jpg
+image: /assets/Claude+Strava+Woof/CreateYourPhotoGallery_ClaudeStravaWoof-Cover.jpg
 categories: [DIY, MacOs, Linux, Windows]
 ---
 
@@ -44,8 +44,6 @@ As instructed, Claude uses the Strava connector to fetch information from the ac
 
 The first question is about how to handle a day with two activities in Strava. This actually underlines a limit of the prompt: it only requires matching the activity with the photo day, but does not specify matching the time of the day as well.
 
-As for the description enrichment, Claude asks if it should be in a separate text file within the folder or embedded in the photo's EXIF header. The Exif header is metadata within the photo files describing the camera settings, the time the picture is taken, the GPS location if available, and descriptions or tags. This is the primary source of information for all the photo gallery software, including OuEstCharlie.
-
 Claude eventually highlights that some photos do not have a matching outing, and proposes to name the corresponding folder with the ISO date only.
 
 As per instruction, a draft folder structure is created for review and validation.
@@ -56,9 +54,9 @@ Claude is able to detect multi-day trips and asks for the corresponding name:
 
 >Mar 28–31, 2025: a 4-day ski touring trip (Combeynot, Chamoissière, Pic de Neige Cordier, Col des Agneaux) with a rotating group of 7. What should I call this trip in the folder name?
 
-When all clarifications are made, Claude generates the Python code for the folder creation, the photo file movement, and the EXIF header edition. If you know this language, you may review the intended modifications.
+When all clarifications are made, Claude generates the Python code for the folder creation, the photo file movement. If you know this language, you may review the intended modifications.
 
-Following user validation, Claude executes the plan and provides a summary of the changes. You may check the folder structure, the description.txt files, and the photo assignments.
+Following user validation, Claude executes the plan and provides a summary of the changes. You may check the folder structure and the photo assignments.
 
 # Search and browse the photos in OuEstCharlie Woof
 
@@ -79,7 +77,7 @@ Once the progress bar of the indexing reaches 100%, you may start the gallery ex
 # Wrap-up
 
 With this tutorial, we have shown how to create a photo gallery from end to end in Claude Desktop CoWork. The gains are quite impressive compared to legacy systems:
-- Photos are sorted and enriched with the Strava activity log for context. The AI not only matches the photos and activities but also finds missing information and inconsistencies. Scripting this process and all the exceptions would require quite complex rules.
+- Photos are sorted, and could be enriched, with the Strava activity log for context. The AI not only matches the photos and activities but also finds missing information and inconsistencies. Scripting this process and all the exceptions would require quite complex rules.
 - Search also benefits from the AI. Your requests are in natural language in the chat. The AI interprets and finds the best matching pictures using all available information fields.
 
 OuEstCharlie Woof is the companion app extending Claude for photo search and browsing without breaking the user experience. Today, as discussed in the post ["Woof is different from other MCP servers"](./2026-07-10-Woof-is-different-to-other-mcp-servers.md), most photo gallery integrations with Claude only wrap actions like search or album creation; the photos are at best shared with Claude one by one.
