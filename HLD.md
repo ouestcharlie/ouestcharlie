@@ -108,7 +108,7 @@ When OuEstCharlie indexes an existing photo library, it overlays `.ouestcharlie/
 ```
 /Photos/                                    ← user's existing root
 ├── .ouestcharlie/
-│   ├── summary.json                        ← flat index of ALL partitions + schema version
+│   ├── summary.json                        ← thin marker: schema version + last indexed timestamp
 │   └── index.lance/                        ← LanceDB columnar index (all photos, all partitions)
 ├── Vacations/
 │   ├── Italy 2023/
@@ -138,7 +138,7 @@ When OuEstCharlie ingests new photos (mobile backup, bulk import), it controls p
 ```
 /photos/                                    ← backend root
 ├── .ouestcharlie/
-│   ├── summary.json                        ← flat index of ALL partitions + schema version
+│   ├── summary.json                        ← thin marker: schema version + last indexed timestamp
 │   └── index.lance/                        ← LanceDB columnar index (all photos, all partitions)
 ├── 2024/
 │   ├── 2024-01/
@@ -163,7 +163,7 @@ Two-level structure: `root/year/month`. Intermediate year folders do not have ma
 
 ```
 photos/                                                          ← bucket prefix (not a real directory)
-├── .ouestcharlie/summary.json                                    ← flat index of ALL partitions + schema version
+├── .ouestcharlie/summary.json                                    ← thin marker: schema version + last indexed timestamp
 ├── .ouestcharlie/index.lance/                                    ← LanceDB columnar index
 ├── 2024/2024-01/.ouestcharlie/thumbnails-Kf3QzA2_nBcR8x….avif
 ├── 2024/2024-01/IMG_001.jpg
@@ -206,12 +206,12 @@ Photos are organized in folders (partitions). Each folder that directly contains
 The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 
 - **`index.lance/`**: a LanceDB columnar store containing **all photos across all partitions** in a single table. Each row stores full per-photo metadata (date, GPS, rating, tags, camera, thumbnail tile location). Consumption agents execute a **single SQL query** against this table to filter across the entire library without per-partition file reads.
-- **`summary.json`**: a **flat index of all partitions**, each entry holding partition-level summary statistics (min/max dates, GPS bounding box, photo count) and the `schemaVersion` (currently `3`). Agents verify the schema version before opening the index; a mismatch prompts a full re-index.
+- **`summary.json`**: a **thin marker file** — just `{schemaVersion, lastIndexedAt}`. Written once per full indexing session (not per partition). Agents verify the schema version before opening the index; a mismatch prompts a full re-index.
 
 | Metadata file | Content | Typical size (100K library) |
 |---|---|---|
 | `index.lance/` | All per-photo metadata in columnar format (one table, all partitions) | ~10–30 MB |
-| `summary.json` | All partition paths + stats + schema version | ~50–100 KB |
+| `summary.json` | Schema version + last indexed timestamp | <1 KB |
 
 ### Schema evolution
 
@@ -220,6 +220,10 @@ The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 - **Unknown fields are ignored and preserved**: an agent encountering an unrecognized field in `summary.json` or XMP sidecars passes it through unchanged.
 - **`schemaVersion` governs the index format**: version 3 means the primary photo store is the LanceDB table at `.ouestcharlie/index.lance/`. A future version may change the table schema or storage format.
 - **Migration = full re-index**: when the schema advances, Woof triggers a full re-index (Whitebeard) which rebuilds the LanceDB table in the new format. No separate migration tooling — this is already a supported operation.
+
+### Runtime Summaries
+
+Rather than reading a precomputed statistics file, consumption agents compute aggregate statistics (photo count, date/rating/width/height ranges, GPS bounding box) on demand with a single DuckDB aggregation over the same LanceDB-query result a photo search would use — scoped by the same filter predicate syntax as a search (an empty predicate summarizes the whole library). This lets the host agent narrow a summary to a directory subtree, a date range, or any other filter before deciding whether to run a full (potentially large) search, without ever materializing or storing a global statistics blob.
 
 ### When XMP sidecars are read
 
@@ -232,7 +236,7 @@ XMP sidecars are read only by write-path agents, never by consumption:
 | Housekeeping / re-index | Yes (recompute from sidecars) | No (rebuilding it) |
 | External tool access (Lightroom, ExifTool) | Yes | No (unaware of OuEstCharlie index) |
 
-### Change detection
+### Change detection (partial implementation)
 
 Per the HLR, OuEstCharlie does not provide edit or delete operations — changes happen externally. The change detection mechanism covers XMP modifications, photo deletions, and photo additions. Woof detects changes through two complementary mechanisms — **triggers** for near-real-time awareness and **sweep** as a catch-all:
 
@@ -489,17 +493,19 @@ For detailed Woof requirements, design, and rationale, see:
 
 ## Efficient Filtering and Pruning
 
-Querying photos uses a **single SQL query** against the LanceDB columnar index at `.ouestcharlie/index.lance/`. All filter predicates (date range, rating, GPS bounding box, tags, camera make/model) are expressed as a SQL WHERE clause evaluated by LanceDB's query engine in one pass — no hierarchical manifest traversal or per-partition file reads are needed.
+Querying photos uses a **single SQL query** against the LanceDB columnar index at `.ouestcharlie/index.lance/`. All filter predicates (date range, rating, GPS bounding box, tags, camera make/model) are expressed as a SQL WHERE clause evaluated by LanceDB's query engine in one pass.
 
-Before executing the query, consumption agents read `summary.json` to verify `schemaVersion`. A mismatch returns an error prompting a full re-index.
+Before executing the query, consumption agents read the thin `summary.json` marker to verify `schemaVersion`. A mismatch returns an error prompting a full re-index.
 
 ### Query cost example
 
 "Show me photos from July 2024 with rating ≥ 4" on a 100,000 photo library:
 
-1. Read `summary.json` (~50 KB) → verify `schemaVersion == 3`
+1. Read `summary.json` (<1 KB) → verify `schemaVersion == 3`
 2. Execute SQL: `date_taken >= TIMESTAMP '2024-07-01 00:00:00' AND date_taken <= TIMESTAMP '2024-07-31 23:59:59' AND rating >= 4`
 3. **Total: 1 JSON read + 1 SQL query** — LanceDB's columnar predicate pushdown reads only the date and rating columns
+
+The same pattern applies to a runtime summary request ("how many photos, and what date range, in this directory?"): 1 JSON read for the schema check + 1 DuckDB aggregation over the LanceDB-filtered rows for that predicate — never a precomputed file to read or keep in sync.
 
 A consumption agent never reads individual XMP sidecars or per-partition manifest files.
 
