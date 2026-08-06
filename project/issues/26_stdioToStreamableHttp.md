@@ -1,5 +1,7 @@
 # OEC-26: Migrate local MCP agents from stdio to Streamable HTTP
 
+#status:open
+
 ## Context
 
 Local MCP servers using stdio transport are increasingly poorly supported by the MCP ecosystem. Woof already runs a dual-transport setup: Wally (the persistent preview/search agent) uses Streamable HTTP, while Whitebeard (the ephemeral indexing agent) still uses stdio via `StdioServerParameters`/`stdio_client`. The HTTP-serving logic (Starlette app, bearer-auth middleware, ephemeral port binding, uvicorn serving, `<NAME>_READY port=<n>` stdout signal) currently lives duplicated inside Wally's own `__main__.py` rather than in the shared `AgentBase` toolkit class, so it isn't reusable by other agents.
