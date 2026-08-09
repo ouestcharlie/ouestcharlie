@@ -1,5 +1,7 @@
 # OEC-43: Gallery localization (i18n) — FR, DE, ES, en-GB, ZH, JA
 
+#status:done
+
 > **Status: ✅ Implemented** in `ouestcharlie-woof/gallery`. The as-built design
 > (and where it diverged from this plan — `en-GB` mirroring `en`, the
 > `globalVariable` Paraglide strategy, paired `_one`/`_other` plural keys,

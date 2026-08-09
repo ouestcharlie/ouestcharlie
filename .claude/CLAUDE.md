@@ -46,6 +46,7 @@ Before making changes, ALWAYS:
 - **Mark open questions**: Add to [OpenPoints.md](../OpenPoints.md) if uncertain
 - **Avoid listing individual code files**: Don't enumerate specific implementation files in documentation - it's not maintainable. Instead, describe patterns, directories, or link to generated documentation
 - **Document only what is non-obvious**: Don't document APIs or what code already makes clear by reading it. Only document constraints, architectural decisions, non-obvious invariants, and cross-cutting behavior not visible from a single file.
+- **Don't reference issue numbers in code or docs**: Issue numbers (e.g. "OEC-39") are only valid at the time of their implementation and become stale afterwards. Explain the rationale directly instead of pointing to an issue.
 
 ## Testing & Validation
 

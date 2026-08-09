@@ -1,5 +1,9 @@
 # OEC-N: Short Title
 
+#status:draft
+
+Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
+
 ## Context
 
 Why this change is needed — the problem, limitation, or compatibility gap it addresses.

@@ -97,6 +97,27 @@ The XMP sidecar is the **single source of truth** for all queryable metadata (se
 
 See [HLD_rationale.md § EXIF](HLD_rationale.md#exif-and-the-metadata-pipeline) for why this approach was chosen.
 
+### Media types: photos and videos
+
+A library is a collection of **media files** — photos and videos (see HLR). Both are represented by the same XMP sidecar and the same index row; a `mediaType` discriminator (`"photo"` | `"video"`, defaulting to `"photo"`) distinguishes them, so manifest, search, and deduplication code stay uniform across media types. This keeps videos metadata-browsable through the exact same conversational search path as photos — only the gallery's rendering branches on `mediaType`.
+
+- **Extraction path differs, output does not**: photos go through EXIF extraction; videos through container/stream inspection (duration, video codec, dimensions, audio-stream presence, plus overlapping fields — capture date, GPS, make/model — mapped from container tags such as iPhone QuickTime metadata). Both populate the same sidecar shape.
+- **Shared fields are reused**: a video's cover-frame dimensions populate the same `width`/`height` as a photo, and its capture date/GPS populate the same `dateTaken`/`gps`.
+- **Video-only fields** added to the sidecar and index: `mediaType`, `durationSeconds`, `videoCodec`, and `hasAudio`. `mediaType`, `durationSeconds`, and `videoCodec` are searchable/filterable; they read as null on photo rows.
+- **One cover image per video**: each video has exactly one derived cover frame, addressed by the video's own `contentHash` — there is no separate cover flag in the schema.
+- **Playback vs. extraction are separate concerns**: extraction decodes a single cover frame server-side (broad codec support), while in-browser playback of the original stream is narrower (e.g. HEVC support is uneven across browsers). A video can therefore index and thumbnail perfectly yet be unplayable in a given browser; `videoCodec` carries the signal the UI uses to warn rather than showing a silently broken player.
+
+### Orientation and stored dimensions
+
+A capture's file can store its pixels rotated away from how they display: a phone held sideways writes a landscape buffer plus a rotation flag. Two fields describe this — `orientation` (EXIF values 1–8) and `width`/`height` — and the pipeline uses **two different conventions** depending on the extraction path. The invariant that holds across both: **`width`/`height` always describe the same buffer that `orientation` (or its absence) says how to display.** They must never be read independently.
+
+- **Stored-orientation convention (standard photos).** For images read through the general EXIF path (e.g. JPEG, TIFF), `orientation` is the EXIF value verbatim and `width`/`height` are the **stored** (pre-rotation) pixel dimensions. A consumer that wants display dimensions must apply the rotation itself: for a 90°/270° orientation (values 5–8), swap the axes. Preview and thumbnail generation pass `orientation` to the image-proc step, which bakes the rotation into the derived image.
+- **Upright convention (HEIC photos and all videos).** These paths decode to an already-upright buffer: the HEIC decoder applies the rotation transform and resets `orientation` to `1`, and video extraction decodes an upright cover frame and swaps `width`/`height` for a 90°/270° display-matrix rotation. Here `width`/`height` are the **display** dimensions and no further rotation is needed — for videos `orientation` is left null, since the swap has already normalized the buffer.
+
+The consequence for consumers: **derive display dimensions from `width`/`height` together with `orientation`, never from `width`/`height` alone.** When `orientation` is null or `1`, the stored dimensions already are the display dimensions; when it is 5–8, swap the axes. Both conventions converge on this single rule, so a consumer that follows it stays correct for every media type without branching on the extraction path.
+
+When EXIF carries no dimension tags at all (common for scans, PNG/WebP, and re-encoded JPEGs), dimensions are recovered by decoding the image header rather than left null — the fallback follows the same convention as the path that produced it.
+
 ## Folder Structure and Partitioning
 
 OuEstCharlie supports **index mode** (preserve existing structure) and **ingest mode** (date-based partitioning). See [HLD_rationale.md § Folder Structure](HLD_rationale.md#folder-structure-and-partitioning) for per-backend considerations and partition sizing analysis.
@@ -206,7 +227,7 @@ Photos are organized in folders (partitions). Each folder that directly contains
 The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 
 - **`index.lance/`**: a LanceDB columnar store containing **all photos across all partitions** in a single table. Each row stores full per-photo metadata (date, GPS, rating, tags, camera, thumbnail tile location). Consumption agents execute a **single SQL query** against this table to filter across the entire library without per-partition file reads.
-- **`summary.json`**: a **thin marker file** — just `{schemaVersion, lastIndexedAt}`. Written once per full indexing session (not per partition). Agents verify the schema version before opening the index; a mismatch prompts a full re-index.
+- **`summary.json`**: a **thin marker file** — just `{schemaVersion, lastIndexedAt}`. Written once per full indexing session (not per partition). Agents verify the schema version falls within the supported compatibility window before opening the index (see Schema evolution); a version outside the window prompts a full re-index or a software upgrade.
 
 | Metadata file | Content | Typical size (100K library) |
 |---|---|---|
@@ -215,11 +236,14 @@ The backend metadata directory (`.ouestcharlie/`) at the backend root holds:
 
 ### Schema evolution
 
-`summary.json` carries a `schemaVersion` field that agents check before opening the index. Current version: **3** (LanceDB columnar index). Schema evolution rules:
+`summary.json` carries a `schemaVersion` field that agents check before opening the index. Current version: **4** (LanceDB columnar index with media-type/video columns). Schema evolution rules:
 
 - **Unknown fields are ignored and preserved**: an agent encountering an unrecognized field in `summary.json` or XMP sidecars passes it through unchanged.
-- **`schemaVersion` governs the index format**: version 3 means the primary photo store is the LanceDB table at `.ouestcharlie/index.lance/`. A future version may change the table schema or storage format.
-- **Migration = full re-index**: when the schema advances, Woof triggers a full re-index (Whitebeard) which rebuilds the LanceDB table in the new format. No separate migration tooling — this is already a supported operation.
+- **`schemaVersion` governs the index format**: version 4 means the primary media store is the LanceDB table at `.ouestcharlie/index.lance/`. A future version may change the table schema or storage format.
+- **Compatibility window `[LOWEST_SCHEMA_VERSION, SCHEMA_VERSION]`**: the software also declares the oldest schema version it can still read *in place*. An index whose version falls in this window is used as-is: additive-only changes (e.g. new nullable LanceDB columns) are applied by an in-place column migration on open, with no full rebuild. Newly introduced columns read as null on rows written by the older version, and the writer's defaults apply going forward. As of version 4 the window is **[3, 4]** — a version-3 (photo-only) index is read directly and upgraded to version 4 additively.
+- **Migration outside the window**:
+  - *Newer than supported* (`> SCHEMA_VERSION`): agents refuse to open the index and prompt a software upgrade.
+  - *Older than the window* (`< LOWEST_SCHEMA_VERSION`): the change is not additive-safe, so a full re-index (Whitebeard) rebuilds the LanceDB table in the new format. No separate migration tooling — this is already a supported operation. A scoped (partition-subset) index, which cannot rebuild the whole library, refuses instead and asks for a full re-index.
 
 ### Runtime Summaries
 
@@ -427,6 +451,13 @@ At ingestion, the agent computes a BLAKE3 hash of the original file bytes, trunc
 
 Since photos are immutable, the hash is stable — it never changes after ingestion, regardless of where the photo is stored.
 
+**Video identity.** Videos cannot use a full-file byte hash: they can be GB-scale on cloud-mounted drives, so hashing every byte on each indexing pass is prohibitive. Instead a video's `contentHash` is a BLAKE3 (same 22-character truncated base64url output) over two **bounded-cost** inputs that are already read during extraction:
+
+1. **The container header** — for MP4/MOV, the `moov` atom (stream metadata plus the sample tables that fingerprint the exact edit/encode). This is a bounded read (located by scanning top-level atoms and following their sizes, so it works even when `moov` sits after `mdat`); the GB-scale `mdat` payload is skipped entirely. The header read is capped (16 MB) — on the rare overflow the capped prefix is hashed, keeping the result deterministic.
+2. **The decoded cover-frame pixels** — the single representative frame already extracted for the thumbnail, tying identity to visible content.
+
+Hashing both makes an accidental collision require matching *both* the full sample-table structure and the cover-frame pixels, so a video `contentHash` is treated as a real identity (not a heuristic) and flows through the same deduplication levels below as a photo hash. Re-encoding a video changes both inputs and therefore yields a new identity — the same behavior as photos, where any re-encode changes `contentHash`.
+
 ### Deduplication Levels
 
 Deduplication operates at three levels:
@@ -495,13 +526,13 @@ For detailed Woof requirements, design, and rationale, see:
 
 Querying photos uses a **single SQL query** against the LanceDB columnar index at `.ouestcharlie/index.lance/`. All filter predicates (date range, rating, GPS bounding box, tags, camera make/model) are expressed as a SQL WHERE clause evaluated by LanceDB's query engine in one pass.
 
-Before executing the query, consumption agents read the thin `summary.json` marker to verify `schemaVersion`. A mismatch returns an error prompting a full re-index.
+Before executing the query, consumption agents read the thin `summary.json` marker to verify `schemaVersion` falls within the supported compatibility window (see Schema evolution). A version outside the window returns an error prompting a full re-index (too old) or a software upgrade (too new).
 
 ### Query cost example
 
 "Show me photos from July 2024 with rating ≥ 4" on a 100,000 photo library:
 
-1. Read `summary.json` (<1 KB) → verify `schemaVersion == 3`
+1. Read `summary.json` (<1 KB) → verify `schemaVersion` is in the supported window (`3 ≤ v ≤ 4`)
 2. Execute SQL: `date_taken >= TIMESTAMP '2024-07-01 00:00:00' AND date_taken <= TIMESTAMP '2024-07-31 23:59:59' AND rating >= 4`
 3. **Total: 1 JSON read + 1 SQL query** — LanceDB's columnar predicate pushdown reads only the date and rating columns
 

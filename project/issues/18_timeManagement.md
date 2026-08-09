@@ -1,6 +1,6 @@
 # OEC#18 — Time management in the Lance index
 
-#status:analysis
+#status:ongoing
 
 ## Context
 
@@ -15,9 +15,29 @@ Photos carry two distinct time concepts that serve different use cases:
 
 The result: the UTC offset is parsed but silently discarded. `date_taken` is stored as local naive time (correct), but there is no way to do accurate chronological ordering across time zones.
 
-### Sorting in Woof
+### Video time is UTC, not local
 
-`gallery_session_manager.py` sorts results by `dateTaken` using a plain string comparison on the ISO datetime returned by the index. Because `date_taken` is local naive time, this sort is correct within a single time zone but becomes inaccurate when merging results from photos taken in different time zones.
+Video ingestion (see OEC-39e) surfaces a new wrinkle. Photo `date_taken` derives
+from EXIF `DateTimeOriginal`, a **naive local** datetime. Video containers instead
+carry `creation_time` (MP4/MOV `mvhd`), which is **defined as UTC** (ISO 8601 with a
+`Z` suffix). Mapping `creation_time` straight into `date_taken` — as the initial
+OEC-39 plan does — writes a UTC instant into a column the rest of the system reads as
+local wall-clock. A clip shot at 20:00 local in France lands in the index as 18:00 or
+19:00, so it groups under the wrong calendar day and interleaves incorrectly against
+photos from the same evening.
+
+The convention in this issue (`date_taken` = local wall-clock, `date_taken_utc` =
+UTC) resolves it cleanly, provided video ingestion **converts to local before writing
+`date_taken`**. The offset precedence is documented in OEC-39e; the schema and query
+conventions below apply unchanged to both media types.
+
+### Sorting
+
+Sorting is pushed down into the Lance index: `LanceIndex.search()` takes an `order_by`
+column (default `date_taken`) and sorts natively via `ColumnOrdering`. Woof only
+forwards a `sort_by`/`sort_order` pair from the MCP tool to that call — it no longer
+sorts rows itself. Because `date_taken` is local naive time, ordering is correct within
+a single time zone but becomes inaccurate when merging photos taken in different zones.
 
 ### HLD gap
 
@@ -47,9 +67,9 @@ This is correct for local-time calendar queries. The HLD does not document the t
 
 3. **Partition summary** — `partition_summary.py` keeps using `date_taken` for `date_min`/`date_max`. The summary is a calendar concept; local time is correct there. No change needed.
 
-### Woof (`ouestcharlie-woof`)
+### Index / Woof
 
-4. **Sort by UTC when available** — `_sort_by_date()` in `gallery_session_manager.py` currently sorts on `dateTaken` (local ISO string). Update to prefer `dateTakenUtc` when present, falling back to `dateTaken`. This makes multi-library merges chronologically accurate for cameras that embed the offset.
+4. **Keep sorting on `date_taken`** — sorting is native in the index (`LanceIndex.search(order_by=...)`), not a Python comparison in Woof. This issue keeps the default `order_by="date_taken"` (local naive time). It is correct within a single time zone and the ordering error across zones is small (bounded by the offset), which is acceptable for now. `date_taken_utc` is still populated (step 2) so the data is available for the further work below.
 
 ### HLD
 
@@ -57,3 +77,7 @@ This is correct for local-time calendar queries. The HLD does not document the t
    - `date_taken` = local naive time, for calendar queries
    - `date_taken_utc` = UTC, nullable, for chronological ordering
    - `utc_offset_minutes` = signed integer minutes, nullable
+
+## Further work
+
+**Sort on a coalesced UTC column** — to make cross-timezone ordering exact, sort on `date_taken_utc` falling back to `date_taken` when null (rows without an offset). This needs the coalesce to be expressible in the index `order_by` (LanceDB `ColumnOrdering` sorts a single column, so this likely means writing a non-null coalesced column at index time rather than coalescing in the query), plus exposing the UTC ordering as a `sort_by` choice in Woof. Deferred until cross-timezone ordering is a real pain point.

@@ -4,7 +4,9 @@
       "Bash(.venv/bin/pytest:*)",
       "WebFetch(domain:ouestcharlie.github.io)",
       "Bash(bundle exec *)",
-      "Bash(curl -s \"https://ouestcharlie.github.io/ouestcharlie/\")"
+      "Bash(curl -s \"https://ouestcharlie.github.io/ouestcharlie/\")",
+      "Bash(.venv/bin/pytest *)",
+      "Bash(.venv/bin/mypy *)"
     ]
   },
   "enabledPlugins": {

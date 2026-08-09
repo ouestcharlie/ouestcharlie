@@ -18,6 +18,7 @@ Functional goals:
     - [x] Gallery integration as MCP App
     - [x] Grid view based on thumbnails
     - [x] Carousel view based on previews generated on the fly
+        - [x] Photo details
     - [x] Full screen switch
     - [x] Indexing progress UI
 - Controller agent and App (Woof)
@@ -25,6 +26,7 @@ Functional goals:
     - [x] MCP client and manager of Wally and Whitebeard
     - [x] MCP App with HTML/JS forms to display the gallery and preview
 - [x] Support for modern image formats (JPEG, HEIC, RAW, PNG)
+- [x] Support for videao (MOV, MP4)
 
 
 Non functional goals
@@ -49,7 +51,6 @@ Out of scope:
 - No ingest mode (index only)
 - Only trivial re-indexing (do not check photo metadata updates)
 - No multi-device
-~~- No bloom filters~~
 - No background daemon (launchd): Woof runs as a stdio MCP server launched on demand by Claude Desktop. Daemon mode is deferred to V2 when change detection and scheduled enrichment justify it.
 
 ## Decisions
@@ -59,10 +60,7 @@ Out of scope:
 ## Open points
 - Query interface
 - Schemas
-    - Manifest JSON schema (leaf + parent)
     - XMP sidecar: which ouestcharlie: fields for V1 (contentHash, metadataVersion, schemaVersion — anything else?)
-- Parameters
-    - AVIF grid container: encoding parameters (quality, tile size)
 
 ## Risks
 - Mounted cloud drive testing (iCloud, OneDrive) may surface issues with file watching, symlinks, and .icloud placeholder files on macOS. Worth noting as a known risk.
