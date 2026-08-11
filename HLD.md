@@ -515,7 +515,7 @@ Agents communicate with Woof using the **Model Context Protocol (MCP)**. Woof is
 
 Woof detects stuck agents via progress token timeout (default: 5 minutes without progress notification) and cancels the tool call.
 
-See [controller_api.json](controller_api.json) for MCP tool definitions (per-agent `tools/list` responses with JSON Schema input/output).
+MCP tool definitions (name, description, and JSON Schema input/output) live in each agent's tool registrations and are discoverable at runtime via the standard `tools/list` request.
 
 For detailed Woof requirements, design, and rationale, see:
 - [woof/woof_LLR.md](woof/woof_LLR.md) — low-level requirements

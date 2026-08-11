@@ -54,7 +54,7 @@ Agents communicate with Woof via MCP (stdio or HTTP transport).
 
 **Documentation:**
 - [agent/agent_LLD_rationale.md](agent/agent_LLD_rationale.md) — Technology selection (Python + Rust)
-- [controller_api.json](controller_api.json) — MCP tool schemas
+- MCP tool schemas — defined in each agent's tool registrations, discoverable at runtime via `tools/list`
 
 **Python toolkit** (in [ouestcharlie-py-toolkit](../ouestcharlie-py-toolkit)):
 - [README.md](../ouestcharlie-py-toolkit/README.md) — Toolkit usage guide
@@ -108,7 +108,7 @@ See High-Level Design
 - HLR, HLD, HLD rationale finalized
 - Woof architecture & requirements detailed
 - Agent LLD rationale complete (tech selection finalized)
-- MCP tool definitions specified ([controller_api.json](controller_api.json))
+- MCP tool definitions specified (per-agent tool registrations, discoverable via `tools/list`)
 - Version 1 vision & charter defined
 
 ### ✅ Implementation of the toolkit and agents
