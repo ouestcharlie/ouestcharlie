@@ -80,10 +80,11 @@ bump:
 			if [ -f "$$repo/pyproject_packaging.toml" ]; then \
 				sed -i '' 's/^version = ".*"/version = "$(VERSION)"/' $$repo/pyproject_packaging.toml; \
 			fi; \
+			pkg=$$(grep '^name = ' $$repo/pyproject.toml | sed 's/^name = "\(.*\)"/\1/'); \
 			if [ -f "$$repo/manifest.json" ]; then \
 				sed -i '' 's/"version": "[0-9][0-9.]*"/"version": "$(VERSION)"/' $$repo/manifest.json; \
+				sed -i '' "s/$$pkg==[0-9][0-9.]*/$$pkg==$(VERSION)/" $$repo/manifest.json; \
 			fi; \
-			pkg=$$(grep '^name = ' $$repo/pyproject.toml | sed 's/^name = "\(.*\)"/\1/'); \
 			for other in $$all_repos; do \
 				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject.toml" ]; then \
 					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject.toml; \
