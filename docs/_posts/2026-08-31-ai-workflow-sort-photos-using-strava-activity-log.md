@@ -57,30 +57,26 @@ Using your own photos rather than made-up ones matters: they have real capture
 times, real GPS, and the real mess of a camera roll. That's what you're learning
 to sort.
 
-Then:
+## Set the folder context and invoke the skill
 
-> Add my PhotoPractice folder as a Woof library called "practice", and index it.
+From the AI Assistant (Claude CoWork or VSCode chat), select the photo on your computer.
+
+Then invoke the skill from the prompt:
+
+>  /woof-photo-workflows:sort-enrich-photos-strava 
+
+It will first ask to index the library, and then start the analysis.
 
 **Indexing runs in the background.** Woof posts **"Indexing complete."** into the
 conversation when it finishes. Wait for that message before carrying on — Claude
 can't see the progress and shouldn't guess.
 
-Once it's done, get your bearings:
+Once it's done, confirm the indexing is complete. The AI assistant will fetch Strava activities, create a local log, correlate to photos dates and eventually come up with a plan.
 
-> How many photos and videos are in the practice library, and what date range do
-> they cover?
+## Answer questions and review plan
 
-Two numbers matter: how many files are **on disk**, and how many Woof
-**indexed**. If they differ, some format isn't being indexed — worth knowing
-before you rely on a search.
-
-## See what matches
-
-> Fetch my Strava activities for the period these photos cover, then tell me
-> which photos were taken during an activity and which weren't. Don't change
-> anything yet.
-
-Read the answer. The interesting parts are the things that *didn't* match.
+Based on the findings in your activity log and the local photos, the AI assistant might ask you questions 
+to clarify your decisions, including the naming of the folder.
 
 **Commutes should be left out, and you'll be asked.** If you log rides to work
 or daily runs, those repeat under an auto-generated name like "Morning ride".
@@ -91,22 +87,13 @@ told.
 
 **Photos just outside the window still count.** People photograph the trailhead
 before starting the watch and the car park after stopping it. A tolerance of
-about 30 minutes catches them. See what it costs you to be strict:
-
-> Redo that with a 5 minute tolerance and tell me what changes.
-
-If nothing changes, none of your photos happened to fall in that band — try
-30 versus 0 minutes instead, or just move on.
+about 30 minutes catches them. 
 
 **Most photos won't match, and that's fine.** A camera roll is mostly family and
 home. Around 15% matching is normal. If nearly everything matches, the tolerance
 is too wide and unrelated photos are being swept in.
 
 ## Sort and caption them
-
-> Good. File the matching photos into folders named after each outing, and put
-> the outing description and sport type into their sidecars. Show me the plan
-> first.
 
 You'll get every file, its destination, and the exact caption and tags — and
 **nothing has changed yet**. This is the pattern for everything here: propose,

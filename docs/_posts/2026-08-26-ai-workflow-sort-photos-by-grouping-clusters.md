@@ -48,9 +48,15 @@ Using your own photos matters here more than anywhere: the whole skill is
 recognising your own days at a glance, and you can't practise that on invented
 ones.
 
-Then:
+## Set the folder context and invoke the skill
 
-> Add my PhotoPractice folder as a Woof library called "practice", and index it.
+From the AI Assistant (Claude CoWork or VSCode chat), select the photo on your computer.
+
+Then invoke the skill from the prompt:
+
+>  /woof-photo-workflows:sort-enrich-photos-interactive-clusters 
+
+It will first ask to index the library, and then start the analysis.
 
 **Indexing runs in the background.** Woof posts **"Indexing complete."** into the
 conversation when it finishes. Wait for that message before carrying on — the AI Assistant
@@ -58,8 +64,8 @@ can't see the progress and shouldn't guess.
 
 ## Work biggest first
 
-> In my practice library, group the photos in Camera by day and list the days
-> with the most photos first. Don't change anything.
+The AI Assistant will identify largest photo cluster by date and show the corresponding photos
+in the Woof gallery.
 
 You'll get something like *20 June: 14 photos, 12 July: 6, 27 June: 2*.
 
@@ -67,10 +73,6 @@ This ordering is the whole trick. A handful of dates usually accounts for most
 of the backlog, so naming three groups can file half the folder. Working in
 date order instead spends your attention on single stray photos while the big
 groups wait.
-
-## Look before you name
-
-> Show me the biggest group in the gallery.
 
 Look at the pictures. You'll usually recognise the day in a second or two — and
 if you don't, that's useful information: it probably doesn't deserve its own
