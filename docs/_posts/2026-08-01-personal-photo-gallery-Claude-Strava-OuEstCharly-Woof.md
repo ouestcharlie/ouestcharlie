@@ -7,7 +7,7 @@ image: /assets/Claude+Strava+Woof/CreateYourPhotoGallery_ClaudeStravaWoof-Cover.
 categories: [DIY, MacOs, Linux, Windows]
 ---
 
-Personal photo galleries are a great asset; they gather and keep many memories of our life. However, creating and managing one is also a challenge and consumes time. Digital photos have not changed much from the old paper photo albums: we must sort photos in albums or their digital equivalent (tags, smart albums), add captions, and name the people. We got accustomed to delegating this to packaged services like Google or Apple photo applications, but then [we get dependent on those: the metadata is created there and remains there](./2026-04-10-why-we-need-to-move-past-gallery-apps.md).
+Personal photo galleries are a great asset; they gather and keep many memories of our life. However, creating and managing one is also a challenge and consumes time. Digital photos have not changed much from the old paper photo albums: we must sort photos in albums or their digital equivalent (tags, smart albums), add captions, and name the people. We got accustomed to delegating this to packaged services like Google or Apple photo applications, but then [we get dependent on those: the metadata is created there and remains there]({% post_url 2026-04-10-why-we-need-to-move-past-gallery-apps %}).
 
 New AI tools and their integrations may change that. In the following tutorial, we show how to create, search and browse a photo library in Claude. Starting from a folder full of photos, use **Claude CoWork** to automatically sort photos into folders and add captions. This extra information comes from your **Strava activity log**. Eventually, the photos are indexed into **OuEstCharlie Woof** so that they are searched and browsed directly from Claude. Added information is co-located with photos; everything remains local to your machine.
 
@@ -64,7 +64,7 @@ Now that photos are sorted in folders and contain context information, how are t
 
 To overcome those limits of Claude, we have created a companion app, [OuEstCharlie Woof](https://github.com/ouestcharlie/ouestcharlie-woof). Woof is extending Claude by providing instant search on folder names and photo metadata (from headers). It also augments Claude's user interface with grid or single-photo display. The user experience stays consistent with Claude: chat with the AI; it translates your intent into queries to Woof, and displays the result.
 
-Woof is installed as a local Claude connector via a small package bundle. Here are [the step-by-step install instructions](./2026-05-13-claude-how-to-step-by-step.md).
+Woof is installed as a local Claude connector via a small package bundle. Here are [the step-by-step install instructions]({% post_url 2026-05-13-claude-how-to-step-by-step %}).
 
 Once Woof is installed, the first step is the configuration of the gallery root folder:
 
@@ -80,4 +80,4 @@ With this tutorial, we have shown how to create a photo gallery from end to end 
 - Photos are sorted, and could be enriched, with the Strava activity log for context. The AI not only matches the photos and activities but also finds missing information and inconsistencies. Scripting this process and all the exceptions would require quite complex rules.
 - Search also benefits from the AI. Your requests are in natural language in the chat. The AI interprets and finds the best matching pictures using all available information fields.
 
-OuEstCharlie Woof is the companion app extending Claude for photo search and browsing without breaking the user experience. Today, as discussed in the post ["Woof is different from other MCP servers"](./2026-07-10-Woof-is-different-to-other-mcp-servers.md), most photo gallery integrations with Claude only wrap actions like search or album creation; the photos are at best shared with Claude one by one.
+OuEstCharlie Woof is the companion app extending Claude for photo search and browsing without breaking the user experience. Today, as discussed in the post ["Woof is different from other MCP servers"]({% post_url 2026-07-10-Woof-is-different-to-other-mcp-servers %}), most photo gallery integrations with Claude only wrap actions like search or album creation; the photos are at best shared with Claude one by one.
