@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "Use an AI workflow to sort photos by grouping them into clusters"
+title: "Use an AI workflow to sort and enrich photos by grouping them into clusters"
 date: 2026-08-26
 last_modified_at: 2026-08-26
 image: /assets/screenshot_2026-04-11_vscode_interactive_skill.jpg
@@ -13,7 +13,7 @@ the job is getting that out of your head efficiently rather than grinding
 through hundreds of files one at a time.
 
 The method of this tutorial is to interactively group photos by day, deal with the biggest groups first, stop when
-you've had enough.
+you've had enough. In the process, photo are enriched with descriptions and tags.
 
 ## What you need
 
