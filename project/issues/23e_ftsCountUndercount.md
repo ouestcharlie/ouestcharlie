@@ -1,4 +1,4 @@
-# OEC-23c: Full-text search total count undercounts matches
+# OEC-23e: Full-text search total count undercounts matches
 
 #status:done
 
