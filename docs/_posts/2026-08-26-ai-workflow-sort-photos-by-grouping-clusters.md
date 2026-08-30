@@ -19,7 +19,7 @@ you've had enough. In the process, photo are enriched with descriptions and tags
 
 **Woof, installed in your Assistant Desktop (Claude Desktop with license, VSCode Chat...)** — see
 the [Woof README](https://github.com/ouestcharlie/ouestcharlie-woof#installation)
-or the [Step by Step Install of OuEstCharlie Woof in Claude Desktop]({% post_url 2026-05-13-claude-how-to-step-by-step %}).
+or the [Step by Step Install of OuEstCharlie Woof in Claude Desktop]({% post_url 2026-05-13-claude-how-to-step-by-step %}). 
 
 **The photo workflow skills**, which come from the `woof-photo-workflows`
 plugin. They are packaged as a plugin in Woof, see also the [README](https://github.com/ouestcharlie/ouestcharlie-woof#optional-skill-plugin).
@@ -48,9 +48,13 @@ Using your own photos matters here more than anywhere: the whole skill is
 recognising your own days at a glance, and you can't practise that on invented
 ones.
 
+Register the library in Woof with the prompt:
+
+> Register a new library "test" at /<the>/<path>/<to>/<the>/<library> in Woof
+
 ## Set the folder context and invoke the skill
 
-From the AI Assistant (Claude CoWork or VSCode chat), select the photo on your computer.
+From the AI Assistant (Claude CoWork or VSCode chat), add to the project the library directory on your computer.
 
 Then invoke the skill from the prompt:
 

@@ -62,9 +62,13 @@ Using your own photos rather than made-up ones matters: they have real capture
 times, real GPS, and the real mess of a camera roll. That's what you're learning
 to sort.
 
+Register the library in Woof with the prompt:
+
+> Register a new library "test" at /<the>/<path>/<to>/<the>/<library> in Woof
+
 ## Set the folder context and invoke the skill
 
-From the AI Assistant (Claude CoWork or VSCode chat), select the photo on your computer.
+From the AI Assistant (Claude CoWork or VSCode chat), add to the project the library directory on your computer.
 
 Then invoke the skill from the prompt:
 
