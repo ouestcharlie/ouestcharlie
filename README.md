@@ -5,7 +5,7 @@
 
 A decentralized, storage-agnostic media management system (photos and videos) inspired by data lakehouse architectures.
 
-> **More about OuEstCharlie on the [OuEstCharlie Blog](https://ouestcharlie.github.io/ouestcharlie/)**
+> **More about OuEstCharlie on the [OuEstCharlie Blog](https://ouestcharlie.github.io)**
 
 ## Overview
 
