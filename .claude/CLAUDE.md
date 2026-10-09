@@ -32,6 +32,7 @@ Before making changes, ALWAYS:
 - Respect data models in `agent/py_toolkit/src/models/`
 - Implement optimistic concurrency for manifest/XMP writes
 - Check [py_toolkit_LLD.md](../agent/py_toolkit/py_toolkit_LLD.md) for design patterns
+- Lint with each repo's pinned ruff (`.venv/bin/ruff`, a dev dependency also used by the pre-commit hook), never `uvx ruff` or a global `ruff`
 
 ### JavaScript / Frontend
 - **No inline JS**: Never use inline `<script>` tags or `onclick`/`onX` attributes in HTML. All JavaScript must live in separate `.js` files and be referenced via `<script src="...">`.
