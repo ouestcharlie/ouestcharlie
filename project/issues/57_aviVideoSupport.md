@@ -1,4 +1,4 @@
-# OEC-57: AVI video support (indexing + transcoded playback)
+# OEC-57: AVI and legacy-codec video support (indexing + transcoded playback)
 
 #status:draft
 
@@ -11,6 +11,21 @@ as out of scope alongside MKV/WebM (`39_videoSupport.md` §1). AVI support is no
 wanted, and unlike MOV/MP4 it cannot reuse the transcode-free playback approach:
 browsers do not play AVI natively, so making AVI videos playable in the gallery
 requires a transcode step, not just cover-frame extraction.
+
+The same gap exists inside MOV, already a supported container. Older compact
+cameras record `.MOV` files with **Motion JPEG** (`mjpeg`) video and PCM audio;
+other legacy MOV/MP4 files carry MPEG-4 Part 2 (`mpeg4`) or DV (`dvvideo`).
+They index and thumbnail fine: the server decodes the cover frame. But
+Chromium-based clients, including Claude Desktop, cannot decode these codecs in
+a `<video>` element. The observed behavior: the audio track plays, and the
+picture stays frozen on the poster frame. QuickTime plays the same files
+natively, so the files are fine. Worse, the gallery gives no warning: its
+playability check (`codecUnplayable` in `ouestcharlie-woof/gallery/src/lib/format.js`)
+only knows about HEVC, and treats every other codec as playable.
+
+So the need for a transcode depends on the **video codec**, not the container:
+AVI is simply a container where nearly every codec is legacy. This issue
+therefore covers both AVI and legacy codecs in MOV/MP4.
 
 This issue extends the OEC-39 design rather than replacing it — indexing,
 identity-hashing, and data-model handling should follow the same pattern as
@@ -40,9 +55,29 @@ identity hash needs a container-specific header extractor.
 
 ### 3. Transcoding for playback — PyAV remux/encode, not a separate ffmpeg dependency
 
+**Which videos are transcoded — by codec, not container.** A video gets a
+transcoded rendition when its `video_codec` (already indexed, OEC-39 §3) is not
+on a browser-playable list:
+
+| `video_codec` | Playback |
+|---|---|
+| `h264`, `vp8`, `vp9`, `av1` | Original file, range-streamed as today |
+| `hevc` | Original file; the gallery warns where the browser can't decode it (OEC-39b). Transcoding HEVC is out of scope here |
+| anything else (`mjpeg`, `mpeg4`, `msmpeg4v*`, `dvvideo`, `wmv*`, …) | Transcoded rendition |
+
+The list names what is known to play, so an unknown or exotic codec defaults to
+"transcode" rather than to a silently broken player. The container also
+matters: AVI is never streamed as-is, whatever its codec, since browsers don't
+open AVI files.
+
+Keep the list in one place in the toolkit (e.g.
+`video.py: BROWSER_PLAYABLE_CODECS`), and expose `needs_transcode(codec,
+suffix) -> bool`. Wally uses it to pick the serving path. The gallery mirrors the
+same list for its warning (§5).
+
 **New:** a transcode step producing a browser-playable MP4 (H.264 + AAC) rendition
-of each AVI source, since — unlike MOV/MP4 — the original AVI stream cannot be
-range-streamed to a `<video>` element. This stays within the project's existing
+of each such source, since the original stream cannot be decoded by a
+`<video>` element. This stays within the project's existing
 `av` (PyAV) dependency — no new `ffmpeg` CLI/subprocess dependency — since PyAV
 already bundles ffmpeg's `libav*`/`libsw*` libraries and exposes both decode
 (used today in `video.py`/`preview_builder.py`/`thumbnail_builder.py`) and
@@ -62,6 +97,14 @@ encode/mux, which this issue is new in using. Concretely, using PyAV's own API
 - This is CPU-bound, full-file work (unlike the O(1) cover-frame decode in
   OEC-39 §2) — cost and duration scale with video length/resolution, which
   drives the eager-vs-lazy question below.
+- **Encoders available:** the currently pinned PyAV (18.0) wheel provides
+  `libx264`, `h264_videotoolbox` (macOS hardware encoder) and `aac`, so no
+  extra dependency is needed. Prefer the hardware encoder when present, with
+  `libx264` as the fallback. Note that the output of `h264_videotoolbox` needs
+  a pixel format of `nv12` rather than `yuv420p`.
+- **Legacy audio:** PCM (`pcm_s16be`/`pcm_s16le`, common next to MJPEG) and
+  ADPCM are not browser-playable either. They are re-encoded to AAC like any
+  other source audio.
 
 Open design questions to resolve before implementation:
 - **When**: three options, not two —
@@ -104,6 +147,10 @@ Open design questions to resolve before implementation:
 - **Storage of the transcoded rendition**: does it live in the same
   backend/library as the source, or in a separate cache location? Affects
   cleanup/GC story if the source AVI is deleted or re-indexed.
+- **Licensing:** PyAV wheels that bundle `libx264` ship a GPL-licensed ffmpeg
+  build. Check whether that is acceptable for how OuEstCharlie is distributed.
+  If not, fall back to `h264_videotoolbox` on macOS, or to an LGPL-compatible
+  encoder (e.g. `libvpx-vp9` into WebM, also bundled) elsewhere.
 
 ### 3b. Unsupported-codec and no-audio handling
 
@@ -159,7 +206,19 @@ distinction to "not even decodable server-side, no rendition possible."
 `ouestcharlie-wally/src/wally/http_server.py`
 
 The video-stream endpoint from OEC-39 §4 needs to serve the transcoded MP4 for
-AVI sources rather than range-streaming the original file. The cover-frame/
+sources where `needs_transcode` is true (all AVI, and MOV/MP4 with a legacy
+codec) rather than range-streaming the original file.
+
+**Playability warning — can ship before the transcode.** Change
+`codecUnplayable` (`ouestcharlie-woof/gallery/src/lib/format.js`) from "HEVC
+only" to the same list as §3: `h264`/`vp8`/`vp9`/`av1` are playable, `hevc`
+keeps its `canPlayType` probe, and anything else is unplayable, so it gets the
+existing codec warning in the details panel. `codecLabel` gains labels for the
+legacy codecs (e.g. `mjpeg` → "Motion JPEG", `mpeg4` → "MPEG-4 Part 2").
+
+This change is small and independent of the transcode: it turns the silent
+failure into a clear message right away. Once transcoding ships, a video with a
+rendition is playable again, and the warning no longer shows for it. The cover-frame/
 thumbnail path is unaffected (same AVIF grid pipeline as any other video) —
 even an unplayable video still has a cover frame if PyAV managed to decode at
 least one frame during indexing, so the grid tile and preview thumbnail keep
@@ -186,12 +245,24 @@ working regardless of `video_playable`.
 
 - AVI fixture indexing: metadata extraction, cover-frame extraction, identity
   hash stability across re-index.
-- Transcode path: verify a transcoded MP4 is produced/served and is decodable.
+- MJPEG-in-MOV fixture with PCM audio (synthesized with PyAV, like the existing
+  `mpeg4` test video): indexes as a video with `video_codec == "mjpeg"`.
+- `needs_transcode`: `h264`/`vp9`/`av1` in MOV/MP4 → False; `mjpeg`/`mpeg4` in
+  MOV → True; any codec in AVI → True; unknown codec → True.
+- Transcode path: verify a transcoded MP4 is produced/served and is decodable,
+  for both the AVI and the MJPEG-in-MOV fixtures, with an H.264 video stream
+  and an AAC audio stream.
+
+**File:** `ouestcharlie-woof/gallery` tests
+
+- `codecUnplayable`: `mjpeg`, `mpeg4` and an unknown codec → true; `h264`,
+  `vp9`, `av1` → false.
 
 ### 7. Documentation
 
 - `HLD.md`: extend the video data-model section (added by OEC-39's
-  implementation) to note AVI's transcode requirement.
+  implementation) with the playback rule: original stream for browser-playable
+  codecs, transcoded rendition for AVI and legacy codecs.
 - `project/OpenPoints.md`: resolve or update the AVI-out-of-scope note left by
   OEC-39.
 
@@ -206,3 +277,8 @@ working regardless of `video_playable`.
   rendition (not the original AVI stream).
 - Re-index the same library: confirm `content_hash` is stable for unchanged
   AVI files.
+- Play an MJPEG `.MOV` from an older compact camera in Claude Desktop: the
+  picture moves in sync with the sound (today: sound only, frozen picture).
+- Before the transcode ships, with only the §5 warning change: the details
+  panel of such a video shows the codec warning.
+- An H.264 MOV/MP4 is still served as the original file, with range requests.
