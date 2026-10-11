@@ -8,6 +8,9 @@
 #   make commit REPOS=0011 MSG="fix: something"
 REPOS ?= 1111
 
+# Pull request base branch (default: master)
+PR_BASE ?= master
+
 # Iterate over repos matching the REPOS bitmask and run a shell command in each.
 define each_repo
 	@i=1; for repo in \
@@ -35,6 +38,10 @@ branch:
 checkout:
 	$(call each_repo,git checkout $(NAME))
 
+## Checkout master and pull: make co-master REPOS=1111
+co-master:
+	$(call each_repo,git checkout master && git pull)
+
 ## Checkout a branch and pull: make pull REPOS=1111 NAME=<branch-name>
 pull:
 	$(call each_repo,git checkout $(NAME) && git pull)
@@ -48,9 +55,8 @@ push:
 	$(call each_repo,git push 2>/dev/null || git push --set-upstream origin $$(git branch --show-current))
 
 ## Create a pull request: make pr REPOS=1111 TITLE="<title>" [BASE=master]
-BASE ?= master
 pr:
-	$(call each_repo,gh pr create --title '$(TITLE)' --base $(BASE) --fill)
+	$(call each_repo,gh pr create --title '$(TITLE)' --base $(PR_BASE) --fill)
 
 ## Create and push a tag: make tag REPOS=1111 NAME=<tag-name>
 tag:
