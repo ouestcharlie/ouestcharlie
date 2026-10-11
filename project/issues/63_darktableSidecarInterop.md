@@ -1,6 +1,6 @@
 # OEC-63: Sidecar interoperability with darktable (shared NAME.EXT.xmp)
 
-#status:open
+#status:done
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 
@@ -76,12 +76,14 @@ These carry no offset, so the result is naive.
 When an existing sidecar's `date_taken` is naive and the media file is a photo,
 recover the offset from the photo's own EXIF (`OffsetTimeOriginal`/
 `OffsetTime`, as `photo.py` already does for extraction). Use it only if the
-EXIF local date-time equals the sidecar's. Otherwise keep the naive value: the
+EXIF local date-time equals the sidecar's, compared to the second (EXIF
+`DateTimeOriginal` has no fraction; darktable's `.314` comes from
+`SubSecTimeOriginal`). Otherwise keep the naive value: the
 sidecar is the source of truth for a date the user may have corrected. This
 reads only the EXIF header, and only for sidecars with a naive date.
 
-Do not write the recovered offset back on read: the next write by OuEstCharlie
-stores it, and darktable would strip it again anyway.
+Do not write the recovered offset back: it is recovered again at each index,
+and darktable would strip it again anyway.
 
 ### 2. Use the real XMP Basic namespace for `xmp:Rating`
 
@@ -96,11 +98,6 @@ stores it, and darktable would strip it again anyway.
 - Existing sidecars switch namespace the next time OuEstCharlie writes them. No
   bulk rewrite.
 
-Open point: darktable writes `xmp:Rating="1"` by default on import. Should
-OuEstCharlie treat a rating of 1 in a darktable-written sidecar as a real
-rating? Proposal: yes. It is what the user sees in darktable, and darktable's
-default initial rating is configurable.
-
 ### 3. Read GPS written as attributes
 
 **File:** `ouestcharlie-py-toolkit/src/ouestcharlie_toolkit/xmp.py` (reader)
@@ -114,7 +111,8 @@ property the reader only takes from child elements.
 
 **File:** `ouestcharlie-py-toolkit/tests/test_xmp.py`
 
-Use a fixture sidecar in darktable's format (written by Exiv2, with
+Use a fixture sidecar in darktable's format,
+`tests/sample-images/001.darktable.ref.xmp` paired with `001.jpg` (written by Exiv2, with
 `darktable:history`, `xmp:Rating`, EXIF-style date, attribute GPS, and
 `darktable|format|jpg` tags). OEC-33 reuses the same fixture for its tag tests.
 
@@ -134,10 +132,53 @@ Use a fixture sidecar in darktable's format (written by Exiv2, with
 - `ouestcharlie-py-toolkit/py_toolkit_LLD.md` (XMP section): sharing
   `NAME.EXT.xmp` with darktable; accepted date formats and offset recovery;
   XMP Basic namespace.
-- User-facing note (README or docs): darktable reads OuEstCharlie's
-  description and tags only at import. After that, enable "look for updated XMP
-  files on startup" so it picks up changes made by OuEstCharlie, otherwise it
-  overwrites them at its next sync.
+
+### 6. Blog post: using darktable and Woof together
+
+**File:** `ouestcharlie.github.io/docs/_posts/YYYY-MM-DD-darktable-and-woof.md`
+(new post, dated on publication; same front matter and style as the existing
+posts)
+
+Written once §1–§3 are released and checked against a real darktable library
+(Verification 2–4). Audience: darktable users who want to search and browse
+their library through Claude without leaving darktable. Content:
+
+- **Why they fit together.** darktable stays the editor and its database stays
+  in place. Woof reads the same `NAME.EXT.xmp` sidecars and the photo files,
+  never darktable's database, and only writes the sidecars.
+- **Search and browse a darktable library.** Register the darktable library
+  folder with Woof and index it. Show which darktable data Woof sees: date
+  (with offset recovered from the photo's EXIF), rating, GPS, description and
+  tags (tags per OEC-33). Example searches and gallery views mixing these
+  fields, e.g. by place, date range and rating.
+- **Maintain the library with the skills.** Use
+  `sort-enrich-photos-interactive-clusters` and `sort-enrich-photos-strava` on
+  an import folder before importing it into darktable, so darktable picks up
+  descriptions and tags at import. Moving files: darktable tracks images by
+  path, so sort before import, or move files within darktable, not with the
+  skills, once imported.
+- **Recommended darktable setup**, so changes flow both ways. darktable reads a
+  sidecar only at import. After that its database wins, and any change made in
+  darktable rewrites the whole sidecar from the database. In darktable's
+  preferences → storage → XMP sidecar files
+  ([darktable manual](https://docs.darktable.org/usermanual/stable/en/preferences-settings/storage/)):
+    - **write sidecar file for each image: on import** (darktable → XMP):
+      darktable writes the sidecar at import and after every change (rating,
+      tags, metadata, edit), so OuEstCharlie sees darktable's changes at its
+      next index. With "after edit", images never edited in darktable get no
+      update; with "never", darktable's changes never reach the sidecar.
+    - **look for updated XMP files on startup: on** (XMP → darktable): at
+      startup, darktable lists the images whose sidecar is newer than its
+      database entry and asks, per image or for all, whether to reload the
+      sidecar into the database or overwrite it from the database. Choose to
+      reload the sidecar for files changed by OuEstCharlie. Reloading also
+      reloads `darktable:history`, which OuEstCharlie keeps unchanged.
+- **Limits.** The check runs only at startup. Changes made by Woof while
+  darktable is open are not seen, and the next darktable change to that image
+  overwrites them. Workflow: close darktable before enriching photos with Woof,
+  then restart darktable and reload the updated sidecars. To force darktable →
+  XMP for some images: lighttable → history stack → "write sidecar files" on
+  the selection (to check in darktable before publishing).
 
 ---
 
@@ -147,21 +188,30 @@ Use a fixture sidecar in darktable's format (written by Exiv2, with
 2. Import a photo with an OuEstCharlie sidecar into darktable, let darktable
    sync, then run a full reindex of that folder. The row keeps its date (with
    offset), and the rating is darktable's.
-3. Set a rating in OuEstCharlie, then open the photo in darktable (with "look
-   for updated XMP files" on): darktable shows the same rating.
-4. Open the sidecar after an OuEstCharlie write: `darktable:history` is
-   unchanged.
+3. With darktable closed, change `xmp:Rating` in the sidecar with an external
+   tool (text editor, ExifTool, or Claude editing the file; rating edit in Woof
+   is only on the roadmap), then start darktable (with "look for updated XMP
+   files" on) and reload the sidecar: darktable shows the new rating. Then run
+   a full reindex in Woof: Woof shows the same rating.
+4. Run the tag skill (`tag_files.py`) on a photo imported in darktable, then
+   open its sidecar: `darktable:history` is unchanged. The skills are the
+   writers users run on existing sidecars today; `XmpStore`'s round trip
+   (used once rating edit in Woof lands) is covered by
+   `test_round_trip_preserves_darktable_history`.
 
 ---
 
-## Open points
+## Decisions
 
 - **Both sidecar forms present** (`NAME.EXT.xmp` from darktable next to an
-  older `NAME.xmp` written by OuEstCharlie or Lightroom): OuEstCharlie reads
-  only the first, so the metadata in the second is shadowed. Should OuEstCharlie
-  merge the user metadata (description, tags, rating) from the shadowed file
-  when the first lacks it?
+  older `NAME.xmp` written by OuEstCharlie or Lightroom): no merge.
+  OuEstCharlie reads only `NAME.EXT.xmp`, and the metadata in `NAME.xmp` is
+  shadowed. Accepted: `NAME.xmp` is legacy and `NAME.EXT.xmp` is the current
+  default.
 - **Concurrent edits:** darktable syncs from its database without reading the
-  file first. Edits made by OuEstCharlie between darktable's import and its next
-  sync are lost unless darktable is set to look for updated XMP files. This can
-  only be documented, not fixed, on OuEstCharlie's side.
+  file first. This cannot be fixed on OuEstCharlie's side; it is covered by the
+  recommended darktable setup and workflow in the blog post (§6).
+- **Default rating 1** (§2): darktable writes `xmp:Rating="1"` by default on
+  import. OuEstCharlie treats it as a real rating, with no special case: it is
+  what the user sees in darktable, and darktable's default initial rating is
+  configurable.
