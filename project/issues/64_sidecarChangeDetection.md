@@ -1,6 +1,6 @@
 # OEC-64: Re-index photos whose sidecar changed (incremental mode)
 
-#status:open
+#status:done
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 
@@ -43,6 +43,16 @@ Out of scope: **when** an incremental run happens. The HLD's triggers, sweep
 schedule and debounce need a long-running Woof (OpenPoints §11). Until then the
 user, or an agent, runs `index_library` after editing in darktable. This issue
 makes that run sufficient.
+
+Also out of scope: changes to the **media file** itself (a crop, a rotation or
+a re-export, on this device or synced from another one) while its sidecar is
+unchanged. The skip ignores the media file's token from `list_files`, and even
+`force_full_index=True` keeps the stale `ouestcharlie:contentHash` from the
+existing sidecar (`XmpStore.read_or_create_from_picture`), so the hash, the
+EXIF-derived fields and the thumbnail stay stale. Only `force_extract_exif=True`
+refreshes them, by rebuilding the sidecar. A possible follow-up: also store the
+media file's token, and re-hash the media file when it differs. The listing
+already returns it at no extra cost.
 
 ---
 
@@ -117,7 +127,8 @@ before.
 
 Count these files in a new `IndexResult.sidecars_changed` field (they are
 still counted in `photos_processed`) and log them at INFO, like deleted
-photos, so the user can see that darktable edits were picked up.
+photos, so the user can see that darktable edits were picked up. Add the
+matching `total_sidecars_changed` property next to `total_sidecars_created`.
 
 Race: a sidecar written between the listing and the read is read in its newer
 state, and the row stores the token returned by the read. The next run compares
@@ -125,12 +136,39 @@ against that token, so nothing is missed or re-read twice.
 
 ### 4. Known limit: mtime as change signal
 
-A tool that restores a sidecar with its old mtime (e.g. `rsync -a` from a
-backup, `cp -p`) is not detected. The same holds for a file synced from a
-cloud drive that preserves mtimes. `force_full_index=True` remains the fallback.
-Document it; do not hash sidecars to work around it.
+The comparison is an equality test, not an ordering. Any sidecar whose mtime
+differs from the indexed token is re-read, whether the new mtime is later or
+earlier. This covers a sidecar edited on another device and synced through a
+cloud drive: sync clients usually set the edit time from the other device,
+which differs from the indexed token even with clock skew or a coarser mtime
+precision on the cloud side. A client that re-stamps local files after upload
+only causes one extra re-read.
 
-### 5. Tests
+A sidecar whose mtime is set back to exactly the indexed value is not detected
+(e.g. `touch -d`, or `cp -p` / `rsync -a` copying back the very version that
+was indexed). `force_full_index=True` remains the fallback. Document it; do not
+hash sidecars to work around it.
+
+### 5. Report changed sidecars in the indexing summary
+
+**File:** `ouestcharlie-whitebeard/src/whitebeard/agent.py` (summary dicts,
+lines 115 and 206)
+
+Add `"totalSidecarsChanged": result.total_sidecars_changed` next to
+`totalSidecarsCreated`, in both `index_library` and `index_partition_scope`.
+
+**File:** `ouestcharlie-woof/gallery/src/components/IndexingProgress.svelte`
+(line 191)
+
+Show the count after "Sidecars created", with a new
+`indexing_sidecars_changed` message in every `gallery/messages/*.json` file
+(en, en-GB, fr, de, es, ja, zh). A summary from an older whitebeard has no
+`totalSidecarsChanged`: hide the line rather than showing an empty value.
+
+Release order: py-toolkit (after OEC-63), then whitebeard, then Woof, each
+pinning the previous one.
+
+### 6. Tests
 
 **File:** `ouestcharlie-whitebeard/tests/test_indexer.py`
 
@@ -156,7 +194,12 @@ Document it; do not hash sidecars to work around it.
 - `test_sidecar_candidates_order`, and a check that `XmpStore.read` resolves
   the same path as the first existing candidate.
 
-### 6. Documentation
+**File:** `ouestcharlie-woof/gallery/src/components/IndexingProgress.test.js`
+
+- The summary shows the changed-sidecar count; the line is hidden when
+  `totalSidecarsChanged` is absent.
+
+### 7. Documentation
 
 - `ouestcharlie-whitebeard/whitebeard_LLD.md` (Indexing steps 1 and 4,
   Incremental Indexing): skip criterion is "indexed once **and** sidecar token
@@ -166,18 +209,25 @@ Document it; do not hash sidecars to work around it.
   photos whose sidecar changed are processed".
 - `HLD.md` (Change detection): the version-token comparison is implemented in
   the indexer's incremental mode; triggers, sweep and debounce remain to do.
-- User-facing note added by OEC-63 (darktable): after editing in darktable, run
-  an incremental index to update OuEstCharlie's search.
+- `ouestcharlie-woof/README.md` (feature table, line 61): "Change detection /
+  automatic re-indexing" becomes "Partial — added and removed pictures, and
+  sidecars edited by other tools (darktable, digiKam…); indexing is not yet
+  triggered automatically".
+- User-facing: the blog post from OEC-63 (§6, "Search, browse and maintain
+  your darktable library with Woof") already says to reindex the folders after
+  working in darktable. It relies on this issue; check its wording once merged.
 
 ---
 
 ## Verification
 
 1. From `ouestcharlie-whitebeard/`: `uv run pytest tests/test_indexer.py -v`;
-   from `ouestcharlie-py-toolkit/`: `uv run pytest tests/test_xmp.py -v`.
+   from `ouestcharlie-py-toolkit/`: `uv run pytest tests/test_xmp.py -v`;
+   from `ouestcharlie-woof/gallery/`: the `IndexingProgress` tests.
 2. Index a folder, open one of its photos in darktable, change its rating and
    add a tag, and let darktable write the sidecar. Run an incremental
-   `index_library` on the folder: the session reports one changed sidecar, and
+   `index_library` on the folder: the Woof indexing summary shows one changed
+   sidecar, and
    `search_photos` on the new rating or tag finds the photo.
 3. Run the incremental index again: nothing is processed.
 4. In the gallery, the photo keeps its thumbnail and shows the new rating.

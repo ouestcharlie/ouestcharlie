@@ -277,6 +277,8 @@ Per the HLR, OuEstCharlie does not provide edit or delete operations — changes
 
 The LanceDB index stores each photo's **last-known XMP version token** (`xmp_version_token` column — mtime, ETag, or generation depending on backend). The sweep compares current tokens against stored values — no XMP content reads needed to detect changes.
 
+**Implemented so far**: the token comparison runs in Whitebeard's incremental indexing. Each `index_library` / `index_partition_scope` run lists sidecars with the media files and re-reads exactly the photos whose sidecar token differs from the indexed one (edited, deleted or superseded sidecar), alongside new and removed photos. Triggers, the scheduled sweep and debouncing remain to do: until then, the user or an agent runs an incremental index after editing in another tool.
+
 **Debouncing**: Changes are not acted on individually. Woof accumulates dirty partitions and schedules housekeeping after a quiet period (default: 10 minutes since the last detected change in a partition). This avoids thrashing when an external tool writes many sidecars in sequence (e.g., Lightroom batch-editing 500 photos).
 
 The flow:
