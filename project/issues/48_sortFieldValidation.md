@@ -1,6 +1,6 @@
 # OEC-48: Strengthen search argument validation (sort field + filter sub-keys)
 
-#status:draft
+#status:done
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 

@@ -1,6 +1,10 @@
 # Plan: JPEG SOF fallback for width/height when EXIF is absent
 
-#status:open
+#status:discarded
+
+Superseded by OEC-47: when EXIF has no dimensions, `extract_exif` reads them
+from the image header with Pillow (`photo.py`). This covers every non-HEIF
+format, not only JPEG, so the SOF parser below was never implemented.
 
 ## Context
 

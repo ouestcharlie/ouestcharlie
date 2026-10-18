@@ -1,6 +1,6 @@
 # OEC-60: Duplicate Lance rows for one photo (hash change, identical copies)
 
-#status:ongoing
+#status:done
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 
