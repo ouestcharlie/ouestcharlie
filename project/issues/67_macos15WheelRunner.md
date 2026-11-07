@@ -1,6 +1,6 @@
 # OEC-67: build the macOS image-proc wheel on macos-15
 
-#status:draft
+#status:done
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 

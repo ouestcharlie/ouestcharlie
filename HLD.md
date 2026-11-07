@@ -107,12 +107,18 @@ A library is a collection of **media files** — photos and videos (see HLR). Bo
 - **One cover image per video**: each video has exactly one derived cover frame, addressed by the video's own `contentHash` — there is no separate cover flag in the schema.
 - **Playback vs. extraction are separate concerns**: extraction decodes a single cover frame server-side (broad codec support), while in-browser playback of the original stream is narrower (e.g. HEVC support is uneven across browsers). A video can therefore index and thumbnail perfectly yet be unplayable in a given browser; `videoCodec` carries the signal the UI uses to warn rather than showing a silently broken player.
 
+### Supported photo formats
+
+The list of photo extensions is defined once, in the toolkit (`PHOTO_SUFFIXES`, next to `VIDEO_SUFFIXES`); Whitebeard indexes exactly these files. Each one must be decodable by image-proc, which reports what its build decodes (`image-proc --formats`, `supported_extensions()` in Python); a toolkit test checks the list is a subset. The Woof skill scripts run standalone and keep a copy, checked against the toolkit by a test.
+
+EXIF is read by pyexiv2 for every format except HEIC/HEIF/HIF (pillow-heif). pyexiv2 cannot open a bare JPEG XL codestream (no container): such a file has no EXIF anyway and is indexed without it.
+
 ### Orientation and stored dimensions
 
 A capture's file can store its pixels rotated away from how they display: a phone held sideways writes a landscape buffer plus a rotation flag. Two fields describe this — `orientation` (EXIF values 1–8) and `width`/`height` — and the pipeline uses **two different conventions** depending on the extraction path. The invariant that holds across both: **`width`/`height` always describe the same buffer that `orientation` (or its absence) says how to display.** They must never be read independently.
 
 - **Stored-orientation convention (standard photos).** For images read through the general EXIF path (e.g. JPEG, TIFF), `orientation` is the EXIF value verbatim and `width`/`height` are the **stored** (pre-rotation) pixel dimensions. A consumer that wants display dimensions must apply the rotation itself: for a 90°/270° orientation (values 5–8), swap the axes. Preview and thumbnail generation pass `orientation` to the image-proc step, which bakes the rotation into the derived image.
-- **Upright convention (HEIC photos and all videos).** These paths decode to an already-upright buffer: the HEIC decoder applies the rotation transform and resets `orientation` to `1`, and video extraction decodes an upright cover frame and swaps `width`/`height` for a 90°/270° display-matrix rotation. Here `width`/`height` are the **display** dimensions and no further rotation is needed — for videos `orientation` is left null, since the swap has already normalized the buffer.
+- **Upright convention (HEIC, AVIF and JPEG XL photos, and all videos).** These paths decode to an already-upright buffer: the HEIC and AVIF decoders apply the HEIF rotation transform (`irot`/`imir`) and the JPEG XL decoder the codestream orientation, so `orientation` is stored as `1` (an EXIF orientation tag in these files is ignored, as their decoders do); video extraction decodes an upright cover frame and swaps `width`/`height` for a 90°/270° display-matrix rotation. Here `width`/`height` are the **display** dimensions and no further rotation is needed — for videos `orientation` is left null, since the swap has already normalized the buffer.
 
 The consequence for consumers: **derive display dimensions from `width`/`height` together with `orientation`, never from `width`/`height` alone.** When `orientation` is null or `1`, the stored dimensions already are the display dimensions; when it is 5–8, swap the axes. Both conventions converge on this single rule, so a consumer that follows it stays correct for every media type without branching on the extraction path.
 
