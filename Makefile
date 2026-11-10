@@ -78,6 +78,7 @@ test:
 bump:
 	@[ -n "$(VERSION)" ] || (echo "Usage: make bump REPOS=<selector> VERSION=<new-version>"; exit 1)
 	@all_repos="../ouestcharlie-py-toolkit ../ouestcharlie-whitebeard ../ouestcharlie-wally ../ouestcharlie-woof"; \
+	compat=$$(echo "$(VERSION)" | cut -d. -f1,2); \
 	i=1; for repo in $$all_repos; do \
 		bit=$$(echo "$(REPOS)" | cut -c$$i); \
 		if [ "$$bit" = "1" ]; then \
@@ -93,10 +94,10 @@ bump:
 			fi; \
 			for other in $$all_repos; do \
 				if [ "$$other" != "$$repo" ] && [ -f "$$other/pyproject.toml" ]; then \
-					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject.toml; \
+					sed -i '' -E "s/$$pkg(>=|~=)[0-9][0-9.]*/$$pkg~=$$compat/g" $$other/pyproject.toml; \
 				fi; \
 				if [ -f "$$other/pyproject_packaging.toml" ]; then \
-					sed -i '' "s/$$pkg>=[0-9][0-9.]*/$$pkg>=$(VERSION)/g" $$other/pyproject_packaging.toml; \
+					sed -i '' -E "s/$$pkg(>=|~=)[0-9][0-9.]*/$$pkg~=$$compat/g" $$other/pyproject_packaging.toml; \
 				fi; \
 			done; \
 		fi; \
