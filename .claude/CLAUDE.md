@@ -11,9 +11,9 @@ OuEstCharlie is a decentralized, storage-agnostic photo management system with:
 
 Before making changes, ALWAYS:
 1. Check relevant design documents:
-   - [HLR.md](../HLR.md) — High-level requirements
-   - [HLD.md](../HLD.md) — System design & data model
-   - [HLD_rationale.md](../HLD_rationale.md) — Design decisions & alternatives
+   - [HLR.md](../design/HLR.md) — High-level requirements
+   - [HLD.md](../design/HLD.md) — System design & data model
+   - [HLD_rationale.md](../design/HLD_rationale.md) — Design decisions & alternatives
    - Component-specific LLDs in `woof/` and `agent/` directories
 2. Understand the MCP interface: [controller_api.json](../controller_api.json)
 3. Review [Version1_vision.md](../project/Version1_vision.md) for V1 scope boundaries
