@@ -28,15 +28,19 @@ jobs:
         with:
           python-version: "3.14"
 
+      # Same range as `required-version` in the root pyproject.toml: how
+      # `uv sync --package` treats the workspace root's dependency groups changed
+      # between uv versions (0.11 installed the root dev group by default and rejected
+      # `--group dev`; 0.13 needs `--group dev`).
       - name: Install uv
-        run: pip install "uv>=0.11"
+        run: pip install "uv~=0.13"
 
       # Only this package, its dependencies and the root dev group, at the locked
       # versions. --no-editable installs the workspace packages as built wheels, so
       # tests run against what users install, and a package that imports something
       # it doesn't declare fails here even though the local root .venv has it all.
       - name: Install package (wheel) and dev tools
-        run: uv sync --locked --package ouestcharlie-${{ matrix.package }} --no-editable
+        run: uv sync --locked --package ouestcharlie-${{ matrix.package }} --no-editable --group dev
 
       # Run per package: the three tests/ packages share a name and can't be
       # collected in one pytest session.

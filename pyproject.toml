@@ -1,5 +1,10 @@
 # Workspace root: no [project] here. Each package in packages/ keeps its own
 # pyproject.toml, PyPI name and wheel; they share one uv.lock and one .venv.
+[tool.uv]
+# `uv sync --package` handles the root dev group differently before 0.13 (CI relies on
+# `--group dev`, which uv 0.11 rejects). Same range as the uv installed in CI.
+required-version = "~=0.13"
+
 [tool.uv.workspace]
 members = ["packages/*"]
 
