@@ -257,8 +257,8 @@ async def search_photos(
     Reads summary.json to verify the schema version, then executes a single
     SQL query against the LanceDB table at .ouestcharlie/index.lance/.
 
-    A missing summary.json is treated as an unindexed library and returns an
-    empty result (not an error).
+    A missing summary.json is treated as an unindexed library: raises
+    ValueError with a "run a full index" message (not an unexpected error).
 
     Directory/partition scoping is expressed via the ``directory`` field in
     ``predicate`` (e.g. ``StringFilter(value="2024", mode="startswith")``).

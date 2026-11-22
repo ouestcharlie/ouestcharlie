@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    ignore:
+      # Workspace packages: versions are set by `make bump`. Not a wildcard:
+      # ouestcharlie-imageproc is released separately and its updates are wanted.
+      - dependency-name: "ouestcharlie-py-toolkit"
+      - dependency-name: "ouestcharlie-whitebeard"
+      - dependency-name: "ouestcharlie-wally"
+      # Ruff patch releases come with the regular lock refresh (`uv lock --upgrade`);
+      # a minor release (0.18) still gets a PR, as it can reformat the code.
+      - dependency-name: "ruff"
+        update-types: ["version-update:semver-patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

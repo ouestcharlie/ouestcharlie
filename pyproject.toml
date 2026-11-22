@@ -1,0 +1,30 @@
+# Workspace root: no [project] here. Each package in packages/ keeps its own
+# pyproject.toml, PyPI name and wheel; they share one uv.lock and one .venv.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "mcp[cli]>=2.0,<3.0.0",
+    "mypy>=2.3",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "python-dotenv>=1.2.1",
+    "ruff~=0.17.0",  # patch releases allowed; a minor bump (0.18) is deliberate
+    "types-python-dateutil>=2.9.0.20260807",
+]
+
+# Shared by every package. Each package extends this file and only sets its own `src`
+# (first-party detection) and per-file ignores. Ruff does not merge configs on its own.
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Absolute imports only: modules move between sub-packages without relative-path churn.
+ban-relative-imports = "all"

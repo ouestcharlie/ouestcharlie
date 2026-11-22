@@ -1,0 +1,40 @@
+repos:
+  - repo: local
+    hooks:
+      # Ruff runs from the workspace venv: its version is pinned once, in the root
+      # dev dependency group (uv.lock), and matches what `uv run ruff` gives by hand.
+      # Each package's pyproject.toml extends the root ruff settings.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --no-sync ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --no-sync ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      # One mypy hook per package, each with its own config (mypy reads the config
+      # of the folder it runs in, not of the checked folder). Runs in the workspace
+      # venv (uv sync first): strict mode needs the real dependencies.
+      # --no-sync: never re-sync (or rebuild) the venv from a commit hook.
+      - id: mypy-py-toolkit
+        name: mypy (py-toolkit)
+        entry: uv run --no-sync mypy --config-file packages/py-toolkit/pyproject.toml packages/py-toolkit/src
+        language: system
+        files: ^packages/py-toolkit/src/.*\.py$
+        pass_filenames: false
+      - id: mypy-whitebeard
+        name: mypy (whitebeard)
+        entry: uv run --no-sync mypy --config-file packages/whitebeard/pyproject.toml packages/whitebeard/src
+        language: system
+        files: ^packages/whitebeard/src/.*\.py$
+        pass_filenames: false
+      - id: mypy-wally
+        name: mypy (wally)
+        entry: uv run --no-sync mypy --config-file packages/wally/pyproject.toml packages/wally/src
+        language: system
+        files: ^packages/wally/src/.*\.py$
+        pass_filenames: false

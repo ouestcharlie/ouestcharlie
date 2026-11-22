@@ -24,7 +24,7 @@ tests/
 ### From PyPI (recommended)
 
 ```bash
-pip install whitebeard
+pip install ouestcharlie-whitebeard
 ```
 
 System prerequisites:
@@ -33,19 +33,21 @@ System prerequisites:
 
 ### From source (development)
 
-Requires the sibling `ouestcharlie-py-toolkit` repo and a built `image-proc` binary (see its README_DEV.md):
+This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
 
 ```bash
-uv venv
-uv sync
+git clone https://github.com/ouestcharlie/ouestcharlie.git
+cd ouestcharlie
+uv sync --all-packages   # the three packages (editable) and the dev tools
 ```
+
 
 ## Running Tests
 
-**Always use `.venv/bin/python -m pytest`:**
+From this package folder (`packages/whitebeard`), with the workspace venv. Not from the repo root: the workspace's three `tests/` packages share a name.
 
 ```bash
-.venv/bin/python -m pytest tests/ -v
+../../.venv/bin/python -m pytest tests/ -v
 ```
 
 ## Incremental vs Force Indexing
@@ -58,11 +60,11 @@ Photos deleted from disk are automatically removed from the index on the next ru
 
 ## MCP Inspector
 
-Use `mcp dev` from the repo root with a backend config pointing at a local photo folder:
+Use `mcp dev` from this package folder (`packages/whitebeard`) with a backend config pointing at a local photo folder:
 
 ```bash
 WOOF_BACKEND_CONFIG='{"type":"filesystem","root":"/path/to/photos"}' \
-    mcp dev src/whitebeard/__main__.py
+    ../../.venv/bin/mcp dev src/whitebeard/__main__.py
 ```
 
 > **Note:** The default MCP Inspector timeout is too low for full-library indexing runs. Increase it in the Inspector settings before calling `index_library` or `index_partition_scope`.
@@ -71,8 +73,8 @@ WOOF_BACKEND_CONFIG='{"type":"filesystem","root":"/path/to/photos"}' \
 
 | Repository | Purpose |
 |------------|---------|
-| [ouestcharlie](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs, HLR/HLD, MCP interface |
+| [ouestcharlie](../../) | Architecture docs, HLR/HLD, and the agent packages below |
+| [ouestcharlie/packages/py-toolkit](../py-toolkit/) | Python toolkit for agents |
+| [**ouestcharlie/packages/whitebeard** *(this package)*](./) | Indexing agent |
+| [ouestcharlie/packages/wally](../wally/) | Search/consumption agent |
 | [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller |
-| [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit) | Python toolkit for agents |
-| [**ouestcharlie-whitebeard** *This repo*](https://github.com/ouestcharlie/ouestcharlie-whitebeard) | Indexing agent |
-| [ouestcharlie-wally](https://github.com/ouestcharlie/ouestcharlie-wally) | Search/consumption agent |

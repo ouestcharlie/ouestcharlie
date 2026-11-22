@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from ouestcharlie_toolkit.agent import AgentBase
 from ouestcharlie_toolkit.storage import METADATA_DIR
 
-from .indexer import index_library, index_partition_scope
+from whitebeard.indexer import index_library, index_partition_scope
 
 _log = logging.getLogger(__name__)
 

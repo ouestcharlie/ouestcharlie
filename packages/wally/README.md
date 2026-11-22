@@ -8,18 +8,18 @@ Wally is the search/consumption agent for OuEstCharlie. It is **stateless and re
 
 | Document | Purpose |
 |----------|---------|
-| [wally_LLD.md](wally_LLD.md) | Low-level design |
+| [wally_LLD.md](../../design/wally_LLD.md) | Low-level design |
 
-## Repository Structure
+## Package Structure
 
-See [wally_LLD.md](wally_LLD.md)
+See [wally_LLD.md](../../design/wally_LLD.md)
 
 ## Installation
 
 ### From PyPI (recommended)
 
 ```bash
-pip install wally
+pip install ouestcharlie-wally
 ```
 
 System prerequisites:
@@ -28,17 +28,21 @@ System prerequisites:
 
 ### From source (development)
 
-Requires the sibling `ouestcharlie-py-toolkit` repo:
+This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
 
 ```bash
-uv venv
-uv sync
+git clone https://github.com/ouestcharlie/ouestcharlie.git
+cd ouestcharlie
+uv sync --all-packages   # the three packages (editable) and the dev tools
 ```
+
 
 ## Running Tests
 
+From this package folder (`packages/wally`), with the workspace venv. Not from the repo root: the workspace's three `tests/` packages share a name.
+
 ```bash
-.venv/bin/pytest tests/ -v
+../../.venv/bin/pytest tests/ -v
 ```
 
 ## MCP Inspector
@@ -47,7 +51,7 @@ Wally runs as a standalone HTTP server (streamable HTTP transport), so it cannot
 
 ```bash
 WOOF_BACKEND_CONFIG='{"type":"filesystem","root":"/path/to/photos","name":"my-backend"}' \
-    .venv/bin/python -m wally
+    ../../.venv/bin/python -m wally   # from packages/wally
 # stdout: WALLY_READY port=<port>
 ```
 
@@ -63,10 +67,10 @@ npx @modelcontextprotocol/inspector
 
 | Repository | Purpose |
 |------------|---------|
-| [ouestcharlie](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs, HLR/HLD, MCP interface |
-| [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit) | Python toolkit for agents |
-| [ouestcharlie-whitebeard](https://github.com/ouestcharlie/ouestcharlie-whitebeard) | Indexing agent |
-| [**ouestcharlie-wally** *(this repo)*](https://github.com/ouestcharlie/ouestcharlie-wally) | Search/consumption agent |
+| [ouestcharlie](../../) | Architecture docs, HLR/HLD, and the agent packages below |
+| [ouestcharlie/packages/py-toolkit](../py-toolkit/) | Python toolkit for agents |
+| [ouestcharlie/packages/whitebeard](../whitebeard/) | Indexing agent |
+| [**ouestcharlie/packages/wally** *(this package)*](./) | Search/consumption agent |
 | [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof) | Woof controller |
 
-See [ouestcharlie/HLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md) for the overall system architecture.
+See [ouestcharlie/HLD.md](../../design/HLD.md) for the overall system architecture.

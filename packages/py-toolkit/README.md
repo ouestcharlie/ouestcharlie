@@ -35,7 +35,7 @@ never from a leaf module or a `_private` name. Tests mirror the same layout unde
 ### From PyPI (recommended)
 
 ```bash
-pip install ouestcharlie-toolkit
+pip install ouestcharlie-py-toolkit
 ```
 
 `ouestcharlie-imageproc` (the Rust binary) is a separate package pulled in automatically. No Rust toolchain required at install time.
@@ -46,25 +46,28 @@ System prerequisites:
 
 ### From source (development)
 
+This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
+
 ```bash
-# For macOs on arm64 architecture, the full Python version is required e.g.: cpython-3.14.5-macos-aarch64-none
-#  the version string is listed by `uv python list`
-uv venv --python 3.14
-uv sync
+git clone https://github.com/ouestcharlie/ouestcharlie.git
+cd ouestcharlie
+uv sync --all-packages   # the three packages (editable) and the dev tools
 ```
 
-`uv sync` uses the `[tool.uv.sources]` override to install `ouestcharlie-imageproc` from the adjacent `../outestcharlie-imageproc` checkout as an editable install (which compiles the Rust binary). Make sure that repo is checked out alongside this one.
+On macOS arm64, `uv` may need the full Python version, e.g. `uv venv --python cpython-3.14.5-macos-aarch64-none` (listed by `uv python list`) before `uv sync`.
+
+`ouestcharlie-imageproc` comes from PyPI. To work on it at the same time, uncomment the `[tool.uv.sources]` override in this package's `pyproject.toml`: it installs `ouestcharlie-imageproc` from a `ouestcharlie-imageproc` checkout next to the `ouestcharlie` one, as an editable install (which compiles the Rust binary).
 
 ## Running Tests
 
-**Always use `.venv/bin/python -m pytest`** — do not use `.venv/bin/pytest` or a system `python`:
+Run from this package folder (`packages/py-toolkit`), with the workspace venv. Not from the repo root: the workspace's three `tests/` packages share a name.
 
 ```bash
 # Unit tests
-.venv/bin/python -m pytest tests/ -v
+../../.venv/bin/python -m pytest tests/ -v
 
 # Run a specific file
-.venv/bin/python -m pytest tests/media/photo/test_photo.py -v --tb=short
+../../.venv/bin/python -m pytest tests/media/photo/test_photo.py -v --tb=short
 ```
 
 Integration tests (real image-proc binary) are in `ouestcharlie-imageproc/tests_integration/`.
@@ -73,10 +76,11 @@ Integration tests (real image-proc binary) are in `ouestcharlie-imageproc/tests_
 
 The toolkit is pure Python — no Rust compilation required:
 
+From the repo root:
+
 ```bash
-pip install hatch
-hatch build
-# produces dist/ouestcharlie_toolkit-*.whl (pure Python, any platform)
+uv build --package ouestcharlie-py-toolkit
+# produces dist/ouestcharlie_py_toolkit-*.whl (pure Python, any platform)
 ```
 
 ## Dependencies
@@ -144,7 +148,7 @@ export WOOF_BACKEND_CONFIG='{"type": "filesystem", "root": "/Users/alice/Photos"
 
 ## Architecture
 
-See [py_toolkit_LLD.md](py_toolkit_LLD.md) for the design.
+See [py_toolkit_LLD.md](../../design/py_toolkit_LLD.md) for the design.
 
 Key design principles:
 
@@ -159,7 +163,7 @@ Key design principles:
 - [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP Specification](https://modelcontextprotocol.io/specification/2025-11-25)
 - [pyexiv2](https://github.com/LeoHsiao1/pyexiv2)
-- [OuEstCharlie HLD](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md)
+- [OuEstCharlie HLD](../../design/HLD.md)
 
 ## License
 

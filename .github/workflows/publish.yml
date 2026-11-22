@@ -1,5 +1,6 @@
-name: Publish ouestcharlie-toolkit
+name: Publish
 
+# One vX.Y.Z tag publishes the three packages, all at version X.Y.Z.
 on:
   push:
     tags: ["v[0-9]*.[0-9]*.[0-9]*"]
@@ -9,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    uses: ./.github/workflows/_build.yml
+    uses: ./.github/workflows/ci.yml
 
   publish:
     name: Publish to PyPI
@@ -22,8 +23,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
+          pattern: dist-*
           path: dist
           merge-multiple: true
+      # If an upload fails halfway, "Re-run failed jobs" reuses the wheels above and
+      # skips the files already on PyPI, so the release completes unchanged.
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          skip-existing: true
           verbose: true

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/**"
+  workflow_dispatch:
+  workflow_call:  # reused by publish.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.package }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [py-toolkit, whitebeard, wally]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pip install "uv>=0.11"
+
+      # Only this package, its dependencies and the root dev group, at the locked
+      # versions. --no-editable installs the workspace packages as built wheels, so
+      # tests run against what users install, and a package that imports something
+      # it doesn't declare fails here even though the local root .venv has it all.
+      - name: Install package (wheel) and dev tools
+        run: uv sync --locked --package ouestcharlie-${{ matrix.package }} --no-editable
+
+      # Run per package: the three tests/ packages share a name and can't be
+      # collected in one pytest session.
+      - name: Run tests
+        working-directory: packages/${{ matrix.package }}
+        run: uv run --no-sync pytest -v
+
+      # mypy reads its config from the current folder, so point it at the package's.
+      - name: Type check
+        run: >-
+          uv run --no-sync mypy
+          --config-file packages/${{ matrix.package }}/pyproject.toml
+          packages/${{ matrix.package }}/src
+
+      - name: Build
+        run: uv build --package ouestcharlie-${{ matrix.package }} --out-dir dist
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.package }}
+          path: dist/

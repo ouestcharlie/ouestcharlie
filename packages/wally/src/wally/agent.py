@@ -20,7 +20,7 @@ from ouestcharlie_toolkit.model import (
     summary_to_dict,
 )
 
-from .searcher import (
+from wally.searcher import (
     BoolFilter,
     CollectionFilter,
     FilterGroup,

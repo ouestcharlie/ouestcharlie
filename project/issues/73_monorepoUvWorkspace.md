@@ -1,6 +1,6 @@
 # OEC-73: Merge py-toolkit, Whitebeard and Wally into the ouestcharlie repo as a uv workspace
 
-#status:open
+#status:ongoing
 
 Status flow: draft (write spec) -> open (review spec) -> todo (spec validated) -> ongoing (implementation started) -> done (merged)
 
@@ -38,10 +38,11 @@ ouestcharlie/
   .gitignore              # extended with .venv, .mypy_cache, .pytest_cache, .ruff_cache, dist
   .github/workflows/      # new: the ouestcharlie repo has no .github/ today
   packages/
-    py-toolkit/   pyproject.toml, src/ouestcharlie_toolkit, tests/, README, LICENSE, LLD docs
-    whitebeard/   pyproject.toml, src/whitebeard, tests/, profiling/, README, LICENSE, LLD
-    wally/        pyproject.toml, src/wally, tests/, README, LICENSE, LLD
-  design/, project/, assets/, ...   # existing content unchanged
+    py-toolkit/   pyproject.toml, src/ouestcharlie_toolkit, tests/, README, LICENSE
+    whitebeard/   pyproject.toml, src/whitebeard, tests/, profiling/, README, LICENSE
+    wally/        pyproject.toml, src/wally, tests/, README, LICENSE
+  design/                 # HLR, HLD and all LLDs (the packages' LLDs move here too)
+  project/, assets/, ...  # existing content unchanged
 ```
 
 ### 2. Freeze the source repos
@@ -123,20 +124,30 @@ ouestcharlie-py-toolkit = { workspace = true }
 ```toml
 [tool.ruff]
 extend = "../../pyproject.toml"
+src = [".", "src"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/wally/__main__.py" = ["E402"]  # paths are relative to the package folder
 ```
 
   The shared settings (`target-version`, `line-length`, `lint.select` including `TID`, and
-  `flake8-tidy-imports`) move to the root. py-toolkit has no per-package ruff settings left,
-  so its `[tool.ruff]` table is removed.
+  `flake8-tidy-imports`) move to the root.
+- **Each package also sets `src = [".", "src"]`** (found during implementation). Ruff
+  decides which imports are first-party from `src`, relative to the project root. Without
+  it, the root becomes the project root: `tests` (and the package itself) are no longer
+  first-party and ruff wants to re-sort the imports of 18 test files. A root-level
+  `src = ["packages/*", "packages/*/src"]` is not a fix either: it makes
+  `ouestcharlie_toolkit` first-party inside Whitebeard and Wally, which re-sorts 13 more
+  files. A per-package `src` keeps each package's import order as it was, so py-toolkit
+  also keeps a `[tool.ruff]` table (`extend` + `src`).
 - **mypy settings stay in each package.** `[tool.mypy]` and its overrides (py-toolkit's
   `ignore_missing_imports` for pyexiv2, pillow_heif and pyarrow) stay in
   `packages/*/pyproject.toml`. mypy reads the config from the folder it is run in, not
   from the checked folder, so every mypy call made from the root passes
   `--config-file packages/<name>/pyproject.toml` (see sections 5 and 6).
-- Update `[project.urls]` for Wally and Whitebeard (they point at their own repos today).
+- Update `[project.urls]`: Homepage → the package folder
+  (`github.com/ouestcharlie/ouestcharlie/tree/master/packages/<name>`), Issues →
+  `ouestcharlie/ouestcharlie/issues`.
 - Delete the per-package `uv.lock` files. Run `uv sync --all-packages`.
 
 ### 5. Pre-commit
@@ -160,21 +171,24 @@ extend = "../../pyproject.toml"
 **Files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml` (replace the three
 sets of `_build.yml`, `build.yml`, `publish.yml`)
 
-- `ci.yml`: one job per package, with path filters (a py-toolkit change also runs the
-  Whitebeard and Wally jobs). The second checkout of the py-toolkit repo goes away.
+- `ci.yml`: one job per package (a matrix), on pull requests that touch `packages/`, the
+  root `pyproject.toml`, `uv.lock` or the workflows. The three jobs always run together:
+  per-package path filters would save under a minute and a py-toolkit change needs all
+  three anyway. The second checkout of the py-toolkit repo goes away.
 - **Each job installs only its own package.** The local root `.venv` holds all three packages
   and their dependencies, so a package that imports something it does not declare still
   passes locally. Today's CI catches this because it tests the installed wheel. Each job
   keeps that check:
-  1. `uv sync --locked --package <name>`: only that package, its dependencies and the
-     dev group.
-  2. `uv build --package <name>`.
-  3. Install the built wheel into a clean venv with the test tools, and run the package's
-     tests and mypy (`--config-file packages/<name>/pyproject.toml`) against it.
-- **Check first:** confirm that `uv sync --package <name>` installs the dev group defined in
-  the root `[dependency-groups]`. If it doesn't, keep a small `dev` group (pytest,
-  pytest-asyncio, mypy and the package's stubs) in each package and keep only
-  `pre-commit` and `ruff` at the root.
+  1. `uv sync --locked --package <name> --no-editable`: only that package, its
+     dependencies and the dev group, at the locked versions. `--no-editable` installs the
+     workspace packages (the package and py-toolkit) as built wheels, so tests import the
+     installed package, not `src/`. This replaces the planned separate "install the wheel
+     in a clean venv" step: same check, and it uses the lock file.
+  2. Tests (from the package folder) and mypy (`--config-file packages/<name>/pyproject.toml`).
+  3. `uv build --package <name>`, uploaded as the artifact `publish.yml` releases.
+- **Checked:** `uv sync --package <name>` does install the root `[dependency-groups] dev`
+  (pytest, mypy, ruff), and leaves the other packages out (Whitebeard is not importable in
+  the Wally environment). No per-package dev group is needed.
 - `publish.yml`: a `vX.Y.Z` tag builds and publishes all three wheels, all at version
   `X.Y.Z` (shared version, see Decisions). The upload uses `skip-existing: true`, so
   rerunning the workflow after a failed upload completes the release (see Decisions).
@@ -196,12 +210,15 @@ sets of `_build.yml`, `build.yml`, `publish.yml`)
   archived (see Decisions, Woof switch). Changes are listed in section 10, Woof repo.
 - `.github/dependabot.yml`: merge the Wally and Whitebeard configs into one at the root:
   the `uv` ecosystem on `/` (Whitebeard's `pip` entry is dropped), plus `github-actions`.
-  Keep the ignore on `ouestcharlie-*` packages and ignore ruff patch updates (see
-  Decisions, ruff pin):
+  Keep the ignore on the three workspace packages and ignore ruff patch updates (see
+  Decisions, ruff pin). The workspace packages are listed by name, not as
+  `ouestcharlie-*`: the wildcard would also hide `ouestcharlie-imageproc` updates.
 
 ```yaml
 ignore:
-  - dependency-name: "ouestcharlie-*"
+  - dependency-name: "ouestcharlie-py-toolkit"
+  - dependency-name: "ouestcharlie-whitebeard"
+  - dependency-name: "ouestcharlie-wally"
   - dependency-name: "ruff"
     update-types: ["version-update:semver-patch"]
 ```
@@ -247,7 +264,12 @@ GitHub and on PyPI pages. After the merge:
   - `github.com/ouestcharlie/ouestcharlie-<name>/blob/master/<file>` →
     `github.com/ouestcharlie/ouestcharlie/blob/master/packages/<name>/<file>`
   - Here `<name>` is `py-toolkit`, `whitebeard` or `wally`.
-- Inside the monorepo, links within one package stay relative.
+- Inside the monorepo, all links are relative paths, including from a package README to
+  `design/` or to another package. Trade-off: relative links in a package README don't
+  resolve on its PyPI page.
+- The packages' LLDs (`py_toolkit_LLD.md`, `py_toolkit_LLD_rationale.md`,
+  `whitebeard_LLD.md`, `wally_LLD.md`) move to `design/`, next to the HLD. Paths for
+  them in the tables below are their original package paths.
 
 URLs to the old repos found today (all must change):
 
@@ -276,7 +298,7 @@ grep -rnE "github.com/ouestcharlie/ouestcharlie-(py-toolkit|wally|whitebeard)" \
 | `design/HLD_rationale.md` | Add the rationale for one repo + one workspace + independent packages (lockstep releases, cross-package changes in one PR, one lock file) and the alternatives (separate repos, one merged package). |
 | `design/agent_LLD_rationale.md` | Check only: technology choices, no repo paths expected. |
 | `README.md` (root) | "Repositories" table (lines 20–28): replace the toolkit, Whitebeard and Wally rows with one row for this repo and list the three packages. "Python toolkit" links (lines 54–55): link `packages/py-toolkit/` and its README (relative links, same repo). Low-level design table (line 77): link `packages/py-toolkit/py_toolkit_LLD.md`, add rows for `whitebeard_LLD.md` and `wally_LLD.md`. Contributing (line 119): agent and toolkit changes now come here. Add a dev setup section (`uv sync --all-packages`, tests, pre-commit). |
-| `.claude/CLAUDE.md` (root) | Remove the stale `agent/py_toolkit/` paths (lines 30–34). Point to `packages/*`. Update the lint rule (line 35): one pinned ruff in the root `.venv`. Add the per-package test commands. |
+| `AGENTS.md` + `CLAUDE.md` (root) | The four `CLAUDE.md` files (root `.claude/` and one per package) are merged into a single root `AGENTS.md`, the name other coding agents read. A one-line root `CLAUDE.md` (`@AGENTS.md`) imports it for Claude Code. Duplicated sections (testing, linting, MCP error handling) appear once; package-specific rules get one section per package. Stale `agent/py_toolkit/` paths and broken links (`controller_api.json`, `OpenPoints.md`) are removed. |
 | `project/Version1_vision.md` | No change: links only to the Woof repo. |
 
 **Moved packages**
@@ -286,14 +308,12 @@ grep -rnE "github.com/ouestcharlie/ouestcharlie-(py-toolkit|wally|whitebeard)" \
 | `packages/py-toolkit/README.md` | Install and dev instructions (`uv sync` at the root). Design-doc URL (HLD, line 162) needs no change. |
 | `packages/py-toolkit/py_toolkit_LLD.md` | No link change: it links only to design docs and imageproc by URL. |
 | `packages/py-toolkit/py_toolkit_LLD_rationale.md` | Check links. |
-| `packages/py-toolkit/.claude/CLAUDE.md` | Title, test command run from the package folder with the root `.venv`. |
 | `packages/whitebeard/README.md` | "Requires the sibling `ouestcharlie-py-toolkit` repo" (line 36) → workspace setup. Repositories table (lines 72–78; old repo URLs on lines 76–78). `mcp dev` instructions (line 61). |
 | `packages/whitebeard/whitebeard_LLD.md` | `py_toolkit_LLD.md` URL (line 128) → `packages/py-toolkit/` URL. HLD and agent rationale URLs (lines 127, 129) need no change. |
-| `packages/whitebeard/.claude/CLAUDE.md` | Title, test command (`.venv/bin/pytest` path, line 5). |
 | `packages/wally/README.md` | "Repository Structure" (line 13), "Requires the sibling `ouestcharlie-py-toolkit` repo" (line 31), Repositories table (lines 64–72; old repo URLs on lines 67–69). |
 | `packages/wally/wally_LLD.md` | "Repository Structure" section (line 12): paths relative to the package. |
-| `packages/wally/.claude/CLAUDE.md` | Title, test command, LLD link (line 42). |
-| `packages/*/pyproject.toml` | `[project.urls]` Homepage and Issues → `ouestcharlie/ouestcharlie`. |
+| `packages/*/pyproject.toml` | `[project.urls]` Homepage → `ouestcharlie/ouestcharlie/tree/master/packages/<name>`, Issues → `ouestcharlie/ouestcharlie/issues`. |
+| `packages/*/README.md` | Also fix the `pip install` commands, which used names that are not the PyPI names (`ouestcharlie-toolkit`, `whitebeard`, `wally`). |
 
 **Woof repo**
 
@@ -330,9 +350,13 @@ grep -rnE "github.com/ouestcharlie/ouestcharlie-(py-toolkit|wally|whitebeard)" \
      For local development it uses editable path sources to
      `../ouestcharlie/packages/...`.
 
-   The `ouestcharlie/Makefile` keeps a two-repo selector (this repo + Woof) for
-   `branch`/`commit`/`push`/`pr`/`tag`. `bump` updates the agents' `~=` pins in Woof's
-   `pyproject.toml`, `pyproject_packaging.toml` and `manifest.json`.
+   The `ouestcharlie/Makefile` keeps a repo selector for
+   `branch`/`commit`/`push`/`pr`/`tag`/`sync`/`test`, now three bits: this repo (`100`),
+   Woof (`010`) and imageproc (`001`); the default is `110`. `co-master` and `pr` use each
+   repo's default branch (`main` for imageproc). `bump` updates the agents' `~=` pins in
+   Woof's `pyproject.toml`, `pyproject_packaging.toml` and `manifest.json`. imageproc keeps
+   its own version line: it is bumped with `IMAGEPROC_VERSION`, never with the shared
+   `VERSION`.
 4. **Ruff rules: one rule set for all packages**, including py-toolkit's `TID` (no relative
    imports). Whitebeard and Wally have only two relative imports between them, fixed in
    this issue.

@@ -1,1 +1,14 @@
 communication/drafts-ideas
+
+# Python workspace (packages/ keep their own .gitignore for package-specific files)
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.envrc
+.DS_Store
