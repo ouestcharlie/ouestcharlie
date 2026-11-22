@@ -1,0 +1,2013 @@
+"""Tests for Whitebeard indexer — core indexing logic."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pyarrow as pa
+import pytest
+from ouestcharlie_toolkit import PHOTO_SUFFIXES
+from ouestcharlie_toolkit.index import PHOTO_SCHEMA, PHOTO_TABLE_NAME, LanceIndex, SummaryStore
+from ouestcharlie_toolkit.model import LOWEST_SCHEMA_VERSION, SCHEMA_VERSION, RootSummary
+from ouestcharlie_toolkit.storage import LocalBackend
+from ouestcharlie_toolkit.xmp import XmpStore, parse_xmp, serialize_xmp
+from PIL import Image
+
+from whitebeard.indexer import (
+    _MAX_CONCURRENT_PARTITIONS,
+    IndexResult,
+    LibraryIndexResult,
+    index_library,
+    index_partition,
+    index_partition_scope,
+)
+
+_SAMPLE_JPG = Path(__file__).parent / "sample-images" / "001.jpg"
+
+# Minimal valid JPEG (SOI + JFIF APP0 + EOI) — no EXIF data.
+_MINIMAL_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+
+
+def _unique_jpeg(i: int) -> bytes:
+    """Unique minimal JPEG bytes so each file gets a distinct content hash."""
+    return _MINIMAL_JPEG + bytes([i % 256])
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def tmpdir(tmp_path: Path) -> Path:
+    return tmp_path
+
+
+@pytest.fixture()
+def backend_with_sample(tmpdir: Path) -> LocalBackend:
+    """Backend rooted at a temp dir that contains 001.jpg."""
+    shutil.copy(_SAMPLE_JPG, tmpdir / "001.jpg")
+    return LocalBackend(root=tmpdir)
+
+
+@pytest.fixture()
+def backend_with_minimal(tmpdir: Path) -> LocalBackend:
+    """Backend rooted at a temp dir that contains a minimal JPEG (no EXIF)."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    return LocalBackend(root=tmpdir)
+
+
+def _write_sample_video(path: Path, *, frames: int = 15) -> None:
+    """Synthesize a tiny mpeg4 MP4 for tests (mpeg4 ships in every ffmpeg build)."""
+    import av
+    from PIL import Image as PILImage
+
+    with av.open(str(path), "w") as container:
+        vstream = container.add_stream("mpeg4", rate=30)
+        vstream.width, vstream.height = 64, 48
+        vstream.pix_fmt = "yuv420p"
+        for i in range(frames):
+            img = PILImage.new("RGB", (64, 48), ((i * 15) % 256, 40, 90))
+            container.mux(vstream.encode(av.VideoFrame.from_image(img)))
+        container.mux(vstream.encode())
+
+
+@pytest.fixture()
+def backend_with_video(tmpdir: Path) -> LocalBackend:
+    """Backend rooted at a temp dir that contains one MP4 video."""
+    _write_sample_video(tmpdir / "clip.mp4")
+    return LocalBackend(root=tmpdir)
+
+
+# ---------------------------------------------------------------------------
+# index_partition — sidecar creation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_creates_xmp_sidecar(backend_with_sample: LocalBackend, tmpdir: Path) -> None:
+    """index_partition writes an XMP sidecar next to the photo."""
+    await index_partition(backend_with_sample, "")
+    # New sidecars use the full-extension convention (Darktable/digiKam-compatible, OEC-25).
+    assert (tmpdir / "001.jpg.xmp").exists()
+
+
+@pytest.mark.asyncio
+async def test_index_sidecar_has_content_hash(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    """The created XMP sidecar contains an ouestcharlie:contentHash."""
+    await index_partition(backend_with_sample, "")
+    sidecar = parse_xmp((tmpdir / "001.jpg.xmp").read_text(encoding="utf-8"))
+    assert sidecar.content_hash is not None
+    assert len(sidecar.content_hash) == 22
+
+
+@pytest.mark.asyncio
+async def test_index_sidecar_has_camera_fields(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    """The created XMP sidecar contains make/model extracted from EXIF."""
+    await index_partition(backend_with_sample, "")
+    sidecar = parse_xmp((tmpdir / "001.jpg.xmp").read_text(encoding="utf-8"))
+    assert sidecar.camera_make is not None
+    assert sidecar.camera_model is not None
+
+
+# ---------------------------------------------------------------------------
+# index_partition — LanceDB index
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_manifest_photo_entry(backend_with_sample: LocalBackend) -> None:
+    """The LanceDB index contains a photo entry with the correct filename and hash."""
+    await index_partition(backend_with_sample, "")
+    lance_index = await LanceIndex.open(backend_with_sample, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "001.jpg"
+    assert len(rows[0]["content_hash"]) == 22
+
+
+@pytest.mark.asyncio
+async def test_index_video_creates_sidecar_with_media_type(
+    backend_with_video: LocalBackend, tmpdir: Path
+) -> None:
+    """A video file is discovered and gets a sidecar marked media_type=video."""
+    await index_partition(backend_with_video, "")
+    sidecar = parse_xmp((tmpdir / "clip.mp4.xmp").read_text(encoding="utf-8"))
+    assert sidecar.media_type == "video"
+    assert sidecar.video_codec == "mpeg4"
+    assert sidecar.duration_seconds is not None
+    assert len(sidecar.content_hash) == 22
+
+
+@pytest.mark.asyncio
+async def test_index_video_lance_row(backend_with_video: LocalBackend) -> None:
+    """The video is indexed into LanceDB with mediaType surfaced as a searchable field."""
+    await index_partition(backend_with_video, "")
+    lance_index = await LanceIndex.open(backend_with_video, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "clip.mp4"
+    assert rows[0]["media_type"] == "video"
+
+
+@pytest.mark.asyncio
+async def test_index_video_cover_frame_thumbnail(
+    backend_with_video: LocalBackend, tmpdir: Path
+) -> None:
+    """Video-only partition: the cover frame is tiled into an AVIF thumbnail chunk."""
+    result = await index_partition(backend_with_video, "", generate_thumbnails=True)
+    assert result.errors == 0
+    assert result.thumbnails_rebuilt
+    assert list((tmpdir / ".ouestcharlie").glob("thumbnails-*.avif"))
+    # The video row carries the tile location, like a photo.
+    lance_index = await LanceIndex.open(backend_with_video, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert rows[0]["thumbnail_avif_hash"] is not None
+
+
+@pytest.mark.asyncio
+async def test_index_mixed_photo_and_video(backend_with_sample: LocalBackend, tmpdir: Path) -> None:
+    """A partition with both a photo and a video indexes and thumbnails both."""
+    _write_sample_video(tmpdir / "clip.mp4")
+    result = await index_partition(backend_with_sample, "", generate_thumbnails=True)
+    assert result.errors == 0
+    assert result.photos_processed == 2
+    lance_index = await LanceIndex.open(backend_with_sample, PHOTO_TABLE_NAME)
+    rows = [x async for x in lance_index.get_partition_rows("")]
+    media = {r["filename"]: r["media_type"] for r in rows}
+    assert media == {"001.jpg": "photo", "clip.mp4": "video"}
+    # Both media produced tiles (they may share one grid chunk).
+    assert all(r["thumbnail_avif_hash"] is not None for r in rows)
+    assert list((tmpdir / ".ouestcharlie").glob("thumbnails-*.avif"))
+
+
+@pytest.mark.asyncio
+async def test_index_partition_alone_does_not_write_summary(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    """indexer.index_partition() is pure LanceDB/XMP logic — it never touches summary.json.
+
+    summary.json is written once per session by whichever caller owns the
+    session (index_library, or the index_partition MCP tool wrapper in
+    agent.py) — not by this lower-level function, so it can be run
+    concurrently across partitions without contending on a shared file.
+    """
+    await index_partition(backend_with_sample, "")
+    assert not (tmpdir / ".ouestcharlie" / "summary.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_index_manifest_rating_in_lance_index(tmpdir: Path) -> None:
+    """Rating extracted from EXIF/XMP ends up in the LanceDB row (aggregated at query time)."""
+    from ouestcharlie_toolkit.model import PhotoEntry, XmpSidecar
+
+    (tmpdir / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "b.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "c.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    ratings = [2, 5, 4]
+    call_count = 0
+
+    async def fake_process(xmp_store, photo_path, force_extract_exif):
+        nonlocal call_count
+        r = ratings[call_count]
+        call_count += 1
+        sidecar = XmpSidecar(content_hash=f"KfAbc123A2nBcR8xYvLm1P{call_count}", rating=r)
+        entry = PhotoEntry.from_sidecar(
+            photo_path.split("/")[-1], sidecar, sidecar.content_hash, "1"
+        )
+        return entry, True
+
+    with patch("whitebeard.indexer._extract_one", side_effect=fake_process):
+        await index_partition(backend, "")
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert sorted(r["rating"] for r in rows) == [2, 4, 5]
+
+
+# ---------------------------------------------------------------------------
+# index_partition — skip / force behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_skips_existing_sidecar(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    """Without force, an existing XMP sidecar is not overwritten."""
+    sentinel = "<!-- sentinel -->"
+    xmp_path = tmpdir / "001.xmp"
+    xmp_path.write_text(sentinel, encoding="utf-8")
+
+    result = await index_partition(backend_with_sample, "")
+
+    assert xmp_path.read_text(encoding="utf-8") == sentinel
+    assert result.sidecars_skipped == 1
+    assert result.sidecars_created == 0
+
+
+@pytest.mark.asyncio
+async def test_index_force_overwrites_sidecar(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    """With force=True, an existing XMP sidecar is replaced with fresh EXIF data."""
+    # First index run creates the sidecar (full-extension convention, OEC-25).
+    await index_partition(backend_with_sample, "")
+
+    # Overwrite the sidecar with a sentinel.
+    xmp_path = tmpdir / "001.jpg.xmp"
+    xmp_path.write_text("<!-- overwritten -->", encoding="utf-8")
+
+    # force_full_index=True is required alongside force_extract_exif so that the photo
+    # is re-processed rather than carried over from the existing manifest.
+    result = await index_partition(
+        backend_with_sample, "", force_extract_exif=True, force_full_index=True
+    )
+
+    assert result.sidecars_created == 1
+    assert result.sidecars_skipped == 0
+    # Content should be the fresh XMP, not the sentinel.
+    new_content = xmp_path.read_text(encoding="utf-8")
+    assert "<!-- overwritten -->" not in new_content
+    assert "ouestcharlie" in new_content
+
+
+# ---------------------------------------------------------------------------
+# index_partition — file filtering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_ignores_non_photo_files(tmpdir: Path) -> None:
+    """Non-photo files (.txt, .md, .json) in a partition are ignored."""
+    (tmpdir / "notes.txt").write_text("hello")
+    (tmpdir / "README.md").write_text("# readme")
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "")
+
+    assert result.photos_processed == 1  # only photo.jpg
+
+
+@pytest.mark.asyncio
+async def test_index_discovers_every_photo_suffix(tmpdir: Path) -> None:
+    """Every extension in the shared toolkit list is picked up, in any case."""
+    names = [f"photo{i}{ext}" for i, ext in enumerate(sorted(PHOTO_SUFFIXES))]
+    names.append("upper.JXL")
+    for name in names:
+        (tmpdir / name).write_bytes(b"x")
+    backend = LocalBackend(root=tmpdir)
+
+    seen: list[str] = []
+
+    async def _fake_extract(_store: XmpStore, photo_path: str, _force: bool) -> None:
+        seen.append(photo_path)
+        raise RuntimeError("not decoded in this test")
+
+    with patch("whitebeard.indexer._extract_one", side_effect=_fake_extract):
+        await index_partition(backend, "")
+
+    assert sorted(seen) == sorted(names)
+
+
+@pytest.mark.asyncio
+async def test_index_ignores_rapidraw_files(tmpdir: Path) -> None:
+    """RapidRAW edit data, original EXIF copies and presets are not media."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    for name in ("photo.jpg.rrdata", "photo.rrexif", "look.rrpreset"):
+        (tmpdir / name).write_text("{}")
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "")
+
+    assert result.photos_processed == 1
+    assert result.errors == 0
+
+
+def _write_format_samples(directory: Path) -> list[str]:
+    """Write a small photo with EXIF in every format Pillow can write."""
+    img = Image.new("RGB", (64, 48))
+    img.putdata([(x * 4, y * 5, 128) for y in range(48) for x in range(64)])
+    exif = Image.Exif()
+    exif[271] = "TestMake"
+    exif[274] = 6
+    names = []
+    for ext in (".jpg", ".png", ".tif", ".webp", ".avif", ".gif", ".bmp"):
+        name = f"photo{ext}"
+        if ext in (".gif", ".bmp"):
+            img.save(directory / name)
+        else:
+            img.save(directory / name, exif=exif.tobytes())
+        names.append(name)
+    return names
+
+
+@pytest.mark.asyncio
+async def test_index_standard_formats_with_thumbnails(tmpdir: Path) -> None:
+    """JPEG, PNG, TIFF, WebP, AVIF, GIF and BMP are indexed and get a thumbnail tile."""
+    names = _write_format_samples(tmpdir)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "", generate_thumbnails=True)
+
+    assert result.errors == 0
+    assert result.photos_processed == len(names)
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert sorted(r["filename"] for r in rows) == sorted(names)
+
+
+@pytest.mark.asyncio
+async def test_index_corrupt_photo_is_one_error(tmpdir: Path) -> None:
+    """A truncated file is reported as one error; the rest of the partition is indexed."""
+    names = _write_format_samples(tmpdir)
+    (tmpdir / "broken.jxl").write_bytes(b"\xff\x0a")
+    (tmpdir / "broken.avif").write_bytes(b"\x00\x00\x00\x18ftypavif")
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "", generate_thumbnails=True)
+
+    assert result.errors == 2
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert sorted(r["filename"] for r in rows) == sorted(names)
+
+
+@pytest.mark.asyncio
+async def test_index_ignores_subdirectory_photos(tmpdir: Path) -> None:
+    """Photos in subdirectories are NOT indexed as part of the parent partition."""
+    subdir = tmpdir / "subdir"
+    subdir.mkdir()
+    (subdir / "deep.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "top.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "")
+
+    assert result.photos_processed == 1  # only top.jpg
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("")]
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "top.jpg"
+
+
+@pytest.mark.asyncio
+async def test_index_result_counts(backend_with_sample: LocalBackend) -> None:
+    """IndexResult counts are accurate for a clean index run."""
+    result = await index_partition(backend_with_sample, "")
+    assert isinstance(result, IndexResult)
+    assert result.photos_processed == 1
+    assert result.sidecars_created == 1
+    assert result.sidecars_skipped == 0
+    assert result.errors == 0
+
+
+# ---------------------------------------------------------------------------
+# index_partition — sub-folder partition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_sub_partition(tmpdir: Path) -> None:
+    """index_partition works correctly for a non-root partition."""
+    sub = tmpdir / "Vacations" / "Italy"
+    sub.mkdir(parents=True)
+    shutil.copy(_SAMPLE_JPG, sub / "001.jpg")
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "Vacations/Italy")
+
+    assert result.photos_processed == 1
+    assert result.sidecars_created == 1
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("Vacations/Italy")]
+    assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# index_library — recursive indexing and parent manifests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_library_single_partition(tmpdir: Path) -> None:
+    """index_library with photos only at root indexes exactly one partition."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 1
+    assert result.total_photos_processed == 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_one_partition_empty(tmpdir: Path) -> None:
+    """index_library with one empty partition pruned."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-08").mkdir(parents=True)  # Empty
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 1
+    assert result.total_photos_processed == 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_one_partition_empty_update(tmpdir: Path) -> None:
+    """index_library with one empty partition pruned."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-08").mkdir(parents=True)  # Empty
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+    # second run — should not duplicate
+    result = await index_library(backend)
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 1
+    assert result.total_photos_processed == 0
+    assert result.total_photos_skipped == 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_one_partition_empty_parent_update(tmpdir: Path) -> None:
+    """index_library with one empty partition pruned."""
+    # Directories
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    # Images
+    (tmpdir / "2024" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+    assert len(result.partitions) == 2
+    assert result.total_photos_processed == 2
+    assert result.total_photos_skipped == 0
+    assert result.total_photos_deleted == 0
+    assert result.total_errors == 0
+
+    # delete and clear partition "2024" but keep sub-partitions
+    (tmpdir / "2024" / "a.jpg").unlink()
+
+    # second run — process deletion
+    result = await index_library(backend)
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 2.0  # Logging deletion
+    assert result.partitions_deleted == 0  # Parent is kept
+    assert result.total_photos_processed == 0
+    assert result.total_photos_skipped == 1
+    assert result.total_photos_deleted == 1
+    assert result.total_errors == 0
+
+    # third run — nothing to do
+    result = await index_library(backend)
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 1.0
+    assert result.partitions_deleted == 0
+    assert result.total_photos_processed == 0
+    assert result.total_photos_skipped == 1
+    assert result.total_photos_deleted == 0
+    assert result.total_errors == 0
+
+
+@pytest.mark.asyncio
+async def test_index_library_writes_thin_summary_json(tmpdir: Path) -> None:
+    """index_library writes summary.json once, as the thin schema-version marker."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    summary_file = tmpdir / ".ouestcharlie" / "summary.json"
+    assert summary_file.exists()
+    data = json.loads(summary_file.read_text())
+    assert data["schemaVersion"] == SCHEMA_VERSION
+    assert "partitions" not in data
+
+
+@pytest.mark.asyncio
+async def test_index_library_reindex_keeps_lance_rows_current(tmpdir: Path) -> None:
+    """Re-indexing a partition does not duplicate its LanceDB rows."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p1.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "A" / "p2.jpg").write_bytes(_unique_jpeg(1))
+    backend = LocalBackend(root=tmpdir)
+
+    await index_partition(backend, "A")
+    # second run — should not duplicate
+    await index_partition(backend, "A")
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("A")]
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_index_library_indexes_all_partitions(tmpdir: Path) -> None:
+    """index_library indexes every partition into LanceDB."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-08").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-08" / "b.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+
+    assert result.total_photos_processed == 2
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    paths = await lance_index.list_partitions()
+    assert "2024/2024-07" in paths
+    assert "2024/2024-08" in paths
+
+
+@pytest.mark.asyncio
+async def test_index_library_lance_rating_per_partition(tmpdir: Path) -> None:
+    """Rating values land in the correct partition's LanceDB rows."""
+    from ouestcharlie_toolkit.model import XmpSidecar
+    from ouestcharlie_toolkit.xmp import serialize_xmp
+
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p1.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "A" / "p2.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "B").mkdir()
+    (tmpdir / "B" / "p3.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    for photo, rating in [("A/p1.jpg", 2), ("A/p2.jpg", 4), ("B/p3.jpg", 5)]:
+        sidecar = XmpSidecar(content_hash=f"KfAbc123A2nBcR8xYvLm1P{rating}", rating=rating)
+        xmp_file = tmpdir / photo.replace(".jpg", ".xmp")
+        xmp_file.write_text(serialize_xmp(sidecar), encoding="utf-8")
+
+    await index_library(backend)
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    ratings_a = sorted([r["rating"] async for r in lance_index.get_partition_rows("A")])
+    ratings_b = sorted([r["rating"] async for r in lance_index.get_partition_rows("B")])
+    assert ratings_a == [2, 4]
+    assert ratings_b == [5]
+
+
+@pytest.mark.asyncio
+async def test_index_library_lance_photo_count_per_partition(tmpdir: Path) -> None:
+    """LanceDB row count per partition matches the actual photo count on disk."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "B").mkdir()
+    (tmpdir / "A" / "p1.jpg").write_bytes(_MINIMAL_JPEG + b"1")
+    (tmpdir / "A" / "p2.jpg").write_bytes(_MINIMAL_JPEG + b"2")
+    (tmpdir / "B" / "p3.jpg").write_bytes(_MINIMAL_JPEG + b"1")  # Same as p1.jpg
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows_a = [r async for r in lance_index.get_partition_rows("A")]
+    rows_b = [r async for r in lance_index.get_partition_rows("B")]
+    assert len(rows_a) == 2
+    assert len(rows_b) == 1
+
+
+def test_top_error_details_caps_at_ten() -> None:
+    """top_error_details yields at most _TOP_ERRORS (10) messages across all partitions."""
+    result = LibraryIndexResult(
+        partitions=[
+            IndexResult("p1", errors=7, error_details=[f"p1-err-{i}" for i in range(7)]),
+            IndexResult("p2", errors=7, error_details=[f"p2-err-{i}" for i in range(7)]),
+        ]
+    )
+    details = list(result.top_error_details)
+    assert len(details) == 10
+    # First errors come from p1 (in order), then p2 up to the cap.
+    assert details[:7] == [f"p1-err-{i}" for i in range(7)]
+    assert details[7:] == ["p2-err-0", "p2-err-1", "p2-err-2"]
+
+
+def test_top_error_details_fewer_than_ten() -> None:
+    """top_error_details yields all errors when total count is below the cap."""
+    result = LibraryIndexResult(
+        partitions=[
+            IndexResult("p1", errors=2, error_details=["e1", "e2"]),
+            IndexResult("p2", errors=1, error_details=["e3"]),
+        ]
+    )
+    assert list(result.top_error_details) == ["e1", "e2", "e3"]
+
+
+def test_top_error_details_no_errors() -> None:
+    """top_error_details yields nothing when there are no errors."""
+    result = LibraryIndexResult(partitions=[IndexResult("p1")])
+    assert list(result.top_error_details) == []
+
+
+@pytest.mark.asyncio
+async def test_index_library_result_totals(tmpdir: Path) -> None:
+    """LibraryIndexResult aggregates counts across all partitions."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "B").mkdir()
+    (tmpdir / "A" / "p1.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "B" / "p2.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+
+    assert result.total_photos_processed == 2
+    assert result.total_sidecars_created == 2
+    assert result.total_errors == 0
+
+
+@pytest.mark.asyncio
+async def test_index_library_idempotent(tmpdir: Path) -> None:
+    """Running index_library twice with the same library is idempotent."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+    result2 = await index_library(backend)
+
+    # In incremental mode, the second run carries over already-indexed photos.
+    assert result2.total_photos_processed == 0  # no newly processed photos
+    assert result2.total_photos_skipped == 1  # one photo carried over from manifest
+    assert result2.total_sidecars_created == 0  # sidecar already exists
+    assert result2.total_errors == 0
+
+
+# ---------------------------------------------------------------------------
+# Logging behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_partition_logs_error_on_photo_failure(tmpdir: Path, caplog) -> None:
+    """When _process_one raises, an ERROR with exc_info is logged."""
+    (tmpdir / "broken.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    with (
+        patch("whitebeard.indexer._extract_one", side_effect=RuntimeError("simulated failure")),
+        caplog.at_level(logging.ERROR, logger="whitebeard.indexer"),
+    ):
+        result = await index_partition(backend, "")
+
+    assert result.errors == 1
+    assert any("simulated failure" in msg for msg in caplog.messages)
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+    assert any(r.exc_info is not None for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Mixed-timezone datetime handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_mixed_timezone_photos(tmpdir: Path) -> None:
+    """index_partition succeeds when photos have a mix of aware and naive datetimes.
+
+    Regression test: min()/max() over a mixed list raises TypeError without the
+    _naive() key function.
+    """
+    from datetime import timedelta, timezone
+
+    from ouestcharlie_toolkit.model import PhotoEntry, XmpSidecar
+    from ouestcharlie_toolkit.storage import VersionToken
+
+    naive_dt = datetime(2024, 7, 1, 12, 0, 0)
+    aware_dt = datetime(2024, 7, 2, 12, 0, 0, tzinfo=timezone(timedelta(hours=2)))
+
+    (tmpdir / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "b.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    call_count = 0
+
+    async def fake_process(xmp_store, photo_path, force_extract_exif):
+        nonlocal call_count
+        call_count += 1
+        dt = naive_dt if call_count == 1 else aware_dt
+        sidecar = XmpSidecar(content_hash="KfAbc123A2nBcR8xYvLm1P", date_taken=dt)
+        token = VersionToken(value=1)
+        entry = PhotoEntry.from_sidecar(
+            photo_path.split("/")[-1], sidecar, sidecar.content_hash, str(token.value)
+        )
+        return entry, True
+
+    with patch("whitebeard.indexer._extract_one", side_effect=fake_process):
+        result = await index_partition(backend, "")
+
+    assert result.errors == 0
+
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_partition_duration_ms(backend_with_sample: LocalBackend) -> None:
+    """IndexResult.duration_ms is a non-negative integer after indexing."""
+    result = await index_partition(backend_with_sample, "")
+    assert isinstance(result.duration_ms, int)
+    assert result.duration_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_index_library_total_duration_ms(tmpdir: Path) -> None:
+    """LibraryIndexResult.total_duration_ms is wall-clock time, not the sum of partition times."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "B").mkdir()
+    (tmpdir / "A" / "p1.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "B" / "p2.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_library(backend)
+
+    assert isinstance(result.total_duration_ms, int)
+    assert result.total_duration_ms >= 0
+    # Wall-clock must be <= sum of partition times (parallelism can only help).
+    assert result.total_duration_ms <= sum(p.duration_ms for p in result.partitions) + 50
+
+
+# ---------------------------------------------------------------------------
+# Parallel indexing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_library_concurrency_capped(tmpdir: Path) -> None:
+    """No more than _MAX_CONCURRENT_PARTITIONS partitions run at the same time."""
+
+    n = _MAX_CONCURRENT_PARTITIONS + 2  # more partitions than the cap
+    for i in range(n):
+        (tmpdir / f"P{i}").mkdir()
+        (tmpdir / f"P{i}" / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    active: list[int] = []
+    peak: list[int] = []
+
+    original_index_partition = index_partition
+
+    async def tracked_index_partition(b, partition, *args, **kwargs):
+        active.append(1)
+        peak.append(len(active))
+        try:
+            return await original_index_partition(b, partition, *args, **kwargs)
+        finally:
+            active.pop()
+
+    with patch("whitebeard.indexer.index_partition", side_effect=tracked_index_partition):
+        await index_library(backend)
+
+    assert max(peak) <= _MAX_CONCURRENT_PARTITIONS
+
+
+# ---------------------------------------------------------------------------
+# Schema version upgrade
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_library_forces_full_reindex_on_schema_upgrade(tmpdir: Path) -> None:
+    """When summary.json has an older schemaVersion, index_library forces a full reindex."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    # First index — creates manifests with the current SCHEMA_VERSION.
+    await index_library(backend)
+
+    # Downgrade below the lowest supported version to simulate a too-old index.
+    store = SummaryStore(backend)
+    _current_summary, version = await store.read_summary()
+    stale = RootSummary(schema_version=LOWEST_SCHEMA_VERSION - 1)
+    await store.write_summary(stale, version)
+
+    # Second run (incremental by default) — must detect stale version and force full reindex.
+    result = await index_library(backend)
+
+    assert result.total_photos_processed > 0  # all photos re-processed, none skipped
+    assert result.total_photos_skipped == 0
+
+
+@pytest.mark.asyncio
+async def test_index_library_no_reindex_within_compatible_window(tmpdir: Path) -> None:
+    """A version within [LOWEST, SCHEMA_VERSION) is used in place — no forced reindex."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    # Simulate an index one version behind but still within the compatible window.
+    store = SummaryStore(backend)
+    _current, version = await store.read_summary()
+    await store.write_summary(RootSummary(schema_version=LOWEST_SCHEMA_VERSION), version)
+
+    result = await index_library(backend)  # must stay incremental, not full-reindex
+
+    assert result.total_photos_processed == 0
+    assert result.total_photos_skipped > 0
+    # A successful run rewrites the summary to the current version.
+    after, _ = await store.read_summary()
+    assert after.schema_version == SCHEMA_VERSION
+
+
+@pytest.mark.asyncio
+async def test_index_library_no_forced_reindex_when_schema_current(tmpdir: Path) -> None:
+    """When the schema version is current, a second run stays incremental."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+    result = await index_library(backend)  # incremental — schema version matches
+
+    assert result.total_photos_processed == 0  # no re-processing
+    assert result.total_photos_skipped > 0  # photo carried over from manifest
+
+
+@pytest.mark.asyncio
+async def test_index_library_raises_when_schema_newer(tmpdir: Path) -> None:
+    """When summary.json has a newer schemaVersion, index_library refuses to run."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    store = SummaryStore(backend)
+    _current_summary, version = await store.read_summary()
+    newer = RootSummary(schema_version=SCHEMA_VERSION + 1)
+    await store.write_summary(newer, version)
+
+    with pytest.raises(ValueError, match="newer"):
+        await index_library(backend)
+
+    # summary.json must be left untouched (still the newer version, not overwritten).
+    unchanged_summary, _ = await store.read_summary()
+    assert unchanged_summary.schema_version == SCHEMA_VERSION + 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_progress_callback_called_for_each_partition(tmpdir: Path) -> None:
+    """on_progress is called exactly once per partition."""
+    for name in ("A", "B", "C"):
+        (tmpdir / name).mkdir()
+        (tmpdir / name / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    calls: list[tuple] = []
+
+    async def on_progress(done, total, partition, duration_ms, photos):
+        calls.append((done, total, partition))
+
+    await index_library(backend, on_progress=on_progress)
+
+    # One call per partition (root "" + A + B + C = 4 partitions)
+    assert len(calls) == 4
+    # 'total' is always the same; 'done' counts up to total
+    totals = {total for _, total, _ in calls}
+    assert totals == {4}
+    assert sorted(done for done, _, _ in calls) == [1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Incremental indexing (force_full_index)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_result_has_photos_skipped_and_deleted_fields(
+    backend_with_minimal: LocalBackend,
+) -> None:
+    """IndexResult has photos_skipped and photos_deleted fields, both 0 on first run."""
+    result = await index_partition(backend_with_minimal, "")
+    assert result.photos_skipped == 0
+    assert result.photos_deleted == 0
+    assert result.errors == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_first_run_processes_all(tmpdir: Path) -> None:
+    """Without an existing manifest, incremental mode processes all photos."""
+    (tmpdir / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "b.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    result = await index_partition(backend, "")  # force_full_index=False is the default
+
+    assert result.photos_processed == 2
+    assert result.photos_skipped == 0
+    assert result.photos_deleted == 0
+    assert result.errors == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_skips_already_indexed_photos(tmpdir: Path) -> None:
+    """In incremental mode, photos already in the manifest are not re-processed."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    # First run: creates the manifest.
+    result1 = await index_partition(backend, "")
+    assert result1.photos_processed == 1
+    assert result1.photos_skipped == 0
+
+    call_count = 0
+    from whitebeard.indexer import _extract_one as real_extract_one
+
+    async def counting_extract(xmp_store, photo_path, force_extract_exif):
+        nonlocal call_count
+        call_count += 1
+        return await real_extract_one(xmp_store, photo_path, force_extract_exif)
+
+    with patch("whitebeard.indexer._extract_one", side_effect=counting_extract):
+        result2 = await index_partition(backend, "")
+
+    assert result2.photos_processed == 0
+    assert result2.photos_skipped == 1
+    assert result2.photos_deleted == 0
+    assert result2.errors == 0
+    assert call_count == 0  # _extract_one was never called
+
+
+@pytest.mark.asyncio
+async def test_incremental_processes_new_photos_in_existing_partition(tmpdir: Path) -> None:
+    """In incremental mode, only photos absent from the manifest are processed."""
+    (tmpdir / "existing.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+
+    # First run: index existing.jpg.
+    result1 = await index_partition(backend, "")
+    assert result1.photos_processed == 1
+
+    # Add a new photo.
+    (tmpdir / "new.jpg").write_bytes(_unique_jpeg(1))
+
+    result2 = await index_partition(backend, "")
+
+    assert result2.photos_processed == 1  # only new.jpg
+    assert result2.photos_skipped == 1  # existing.jpg carried over
+    assert result2.photos_deleted == 0
+    assert result2.errors == 0
+
+    # Both photos must appear in the index.
+    lance_index_obj = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index_obj.get_partition_rows("")]
+    filenames = {r["filename"] for r in rows}
+    assert "existing.jpg" in filenames
+    assert "new.jpg" in filenames
+
+
+@pytest.mark.asyncio
+async def test_incremental_removes_deleted_photos_from_manifest(
+    tmpdir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Photos deleted from disk are counted, logged, and removed from the index."""
+    (tmpdir / "keep.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "delete.jpg").write_bytes(_unique_jpeg(1))
+    backend = LocalBackend(root=tmpdir)
+
+    # First run: both photos indexed.
+    await index_partition(backend, "")
+
+    # Remove one photo from disk.
+    (tmpdir / "delete.jpg").unlink()
+
+    with caplog.at_level(logging.INFO, logger="whitebeard.indexer"):
+        result = await index_partition(backend, "")
+
+    assert result.photos_deleted == 1
+    assert result.photos_skipped == 1  # keep.jpg carried over
+    assert result.photos_processed == 0
+
+    # "delete.jpg" must appear in the INFO log.
+    assert any("delete.jpg" in record.message for record in caplog.records)
+
+    # Index must only contain keep.jpg.
+    lance_index_obj = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index_obj.get_partition_rows("")]
+    filenames = {r["filename"] for r in rows}
+    assert "keep.jpg" in filenames
+    assert "delete.jpg" not in filenames
+
+
+@pytest.mark.asyncio
+async def test_force_full_index_reprocesses_all_photos(tmpdir: Path) -> None:
+    """force_full_index=True re-processes all photos even if manifest is current."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_partition(backend, "")  # first run
+
+    call_count = 0
+    from whitebeard.indexer import _extract_one as real_extract_one
+
+    async def counting_extract(xmp_store, photo_path, force_extract_exif):
+        nonlocal call_count
+        call_count += 1
+        return await real_extract_one(xmp_store, photo_path, force_extract_exif)
+
+    with patch("whitebeard.indexer._extract_one", side_effect=counting_extract):
+        result = await index_partition(backend, "", force_full_index=True)
+
+    assert result.photos_processed == 1
+    assert result.photos_skipped == 0
+    assert result.photos_deleted == 0
+    assert call_count == 1  # _extract_one was called despite existing manifest
+
+
+@pytest.mark.asyncio
+async def test_force_full_index_removes_deleted_photos_from_index(tmpdir: Path) -> None:
+    """force_full_index=True must also remove photos deleted from disk from the index."""
+    (tmpdir / "keep.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "delete.jpg").write_bytes(_unique_jpeg(1))
+    backend = LocalBackend(root=tmpdir)
+
+    await index_partition(backend, "")  # first run, both indexed
+
+    (tmpdir / "delete.jpg").unlink()
+
+    result = await index_partition(backend, "", force_full_index=True)
+
+    assert result.photos_deleted == 1
+
+    lance_index_obj = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index_obj.get_partition_rows("")]
+    filenames = {r["filename"] for r in rows}
+    assert "keep.jpg" in filenames
+    assert "delete.jpg" not in filenames
+
+
+@pytest.mark.asyncio
+async def test_index_library_incremental_skips_already_indexed(tmpdir: Path) -> None:
+    """Second library run in incremental mode skips already-indexed photos."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)  # initial run
+
+    result = await index_library(backend)  # incremental second run
+
+    partition_a = next(r for r in result.partitions if r.partition == "A")
+    assert partition_a.photos_skipped == 1
+    assert partition_a.photos_processed == 0
+    assert result.total_photos_skipped >= 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_force_full_index_reprocesses_all(tmpdir: Path) -> None:
+    """index_library with force_full_index=True reprocesses all photos."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)  # initial run
+
+    result = await index_library(backend, force_full_index=True)
+
+    for r in result.partitions:
+        assert r.photos_skipped == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_skips_thumbnail_when_no_change(tmpdir: Path) -> None:
+    """In incremental mode, thumbnails are not regenerated when no new photos exist."""
+    (tmpdir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_partition(backend, "")  # first run
+
+    thumbnail_call_count = 0
+
+    async def counting_thumbnails(b, partition, entries, tier):
+        nonlocal thumbnail_call_count
+        thumbnail_call_count += 1
+        return []
+
+    with patch(
+        "whitebeard.indexer.generate_partition_thumbnails",
+        side_effect=counting_thumbnails,
+    ):
+        result = await index_partition(backend, "", generate_thumbnails=True)
+
+    assert result.thumbnails_rebuilt is False
+    assert thumbnail_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_generates_new_thumbnail_chunk_when_photo_added(
+    tmpdir: Path,
+) -> None:
+    """In incremental mode, a new thumbnail chunk is generated for new photos only."""
+    (tmpdir / "existing.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+
+    await index_partition(backend, "")  # first run
+
+    (tmpdir / "new.jpg").write_bytes(_unique_jpeg(1))  # add a new photo
+
+    thumbnail_call_args: list = []
+
+    async def capturing_thumbnails(b, partition, entries, tier):
+        thumbnail_call_args.append([e.filename for e in entries])
+        return []
+
+    with patch(
+        "whitebeard.indexer.generate_partition_thumbnails",
+        side_effect=capturing_thumbnails,
+    ):
+        result = await index_partition(backend, "", generate_thumbnails=True)
+
+    assert result.thumbnails_rebuilt is True
+    assert len(thumbnail_call_args) == 1
+    # Only the new photo must be passed to the thumbnail builder.
+    assert thumbnail_call_args[0] == ["new.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# One row per (partition, content_hash) and per (partition, filename) — OEC-60
+# ---------------------------------------------------------------------------
+
+
+async def _rows(backend: LocalBackend, partition: str = "") -> list[dict]:
+    idx = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    return [r async for r in idx.get_partition_rows(partition)]
+
+
+def _assert_unique_keys(rows: list[dict]) -> None:
+    hashes = [r["content_hash"] for r in rows]
+    filenames = [r["filename"] for r in rows]
+    assert len(hashes) == len(set(hashes)), hashes
+    assert len(filenames) == len(set(filenames)), filenames
+
+
+async def _seed_duplicate_row(backend: LocalBackend, source: str, filename: str) -> None:
+    """Append a copy of ``source``'s row named ``filename``, bypassing merge_insert,
+    to recreate a duplicate merge key as left by pre-OEC-11b indexes. The copy
+    carries ``filename``'s own sidecar token, as a row indexed from it would."""
+    idx = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    row = next(r for r in await _rows(backend) if r["filename"] == source)
+    token = str((backend.root / f"{filename}.xmp").stat().st_mtime_ns)
+    seeded = {**row, "filename": filename, "xmp_version_token": token}
+    await idx._table.add(pa.Table.from_pylist([seeded], schema=PHOTO_SCHEMA))
+
+
+@pytest.mark.asyncio
+async def test_full_index_replaces_row_when_content_hash_changes(tmpdir: Path) -> None:
+    """Cause A: a file keeps its name but gets a new hash — one row, new hash."""
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    (old_hash,) = {r["content_hash"] for r in await _rows(backend)}
+
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(1))
+    await index_partition(backend, "", force_full_index=True, force_extract_exif=True)
+
+    rows = await _rows(backend)
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "photo.jpg"
+    assert rows[0]["content_hash"] != old_hash
+
+
+@pytest.mark.asyncio
+async def test_incremental_repairs_filename_with_two_hashes(tmpdir: Path) -> None:
+    """A filename left with rows for its old and new hash is repaired by an
+    incremental run: only the current hash remains."""
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    (old_row,) = await _rows(backend)
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(1))
+    await index_partition(backend, "", force_full_index=True, force_extract_exif=True)
+    # Pre-OEC-60 behaviour: the full re-index left the old row. Recreate it.
+    idx = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    await idx._table.add(pa.Table.from_pylist([old_row], schema=PHOTO_SCHEMA))
+    assert len(await _rows(backend)) == 2
+
+    await index_partition(backend, "")
+
+    rows = await _rows(backend)
+    assert len(rows) == 1
+    assert rows[0]["content_hash"] != old_row["content_hash"]
+
+
+@pytest.mark.asyncio
+async def test_identical_copies_single_row(tmpdir: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Cause B: two byte-identical files give one row, kept across re-indexes.
+    The indexer picks the representative itself: upsert_partition never warns."""
+    (tmpdir / "IMG_0001.JPG").write_bytes(_unique_jpeg(0))
+    (tmpdir / "IMG_0001_modified.JPG").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+
+    with caplog.at_level(logging.WARNING):
+        await index_partition(backend, "")
+        assert len(await _rows(backend)) == 1
+
+        await index_partition(backend, "", force_full_index=True)
+        rows = await _rows(backend)
+        assert len(rows) == 1
+
+        await index_partition(backend, "")
+        rows = await _rows(backend)
+        assert len(rows) == 1
+        assert rows[0]["filename"] == "IMG_0001.JPG"
+
+    assert not [r for r in caplog.records if "Duplicate content_hash" in r.message]
+
+
+@pytest.mark.asyncio
+async def test_identical_copies_representative_is_stable(tmpdir: Path) -> None:
+    """Incremental runs never rename the row to the other copy."""
+    (tmpdir / "b.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    # The copy added later sorts first, but must not take over the row.
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+
+    for _ in range(2):
+        await index_partition(backend, "")
+        rows = await _rows(backend)
+        assert [r["filename"] for r in rows] == ["b.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_repairs_duplicate_key_rows(tmpdir: Path) -> None:
+    """Two rows with the same (partition, content_hash) collapse to one."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "b.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "other.jpg").write_bytes(_unique_jpeg(1))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    await _seed_duplicate_row(backend, "a.jpg", "b.jpg")
+    await _seed_duplicate_row(backend, "other.jpg", "other.jpg")
+    assert len(await _rows(backend)) == 4
+
+    await index_partition(backend, "")
+
+    rows = await _rows(backend)
+    _assert_unique_keys(rows)
+    assert sorted(r["filename"] for r in rows) == ["a.jpg", "other.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_repair_preserves_thumbnail_reference(tmpdir: Path) -> None:
+    """A row deleted and written back keeps its thumbnail reference."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    idx = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    (row,) = await _rows(backend)
+    await idx._table.delete("filename = 'a.jpg'")
+    thumbed = {**row, "thumbnail_avif_hash": "avif123", "thumbnail_tile_index": 3}
+    await idx._table.add(pa.Table.from_pylist([thumbed, thumbed], schema=PHOTO_SCHEMA))
+
+    await index_partition(backend, "")
+
+    rows = await _rows(backend)
+    assert len(rows) == 1
+    assert rows[0]["thumbnail_avif_hash"] == "avif123"
+    assert rows[0]["thumbnail_tile_index"] == 3
+
+
+@pytest.mark.asyncio
+async def test_deleting_representative_keeps_remaining_copy(tmpdir: Path) -> None:
+    """Deleting the file named in the row keeps the photo under the other copy."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "b.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    assert [r["filename"] for r in await _rows(backend)] == ["a.jpg"]
+
+    (tmpdir / "a.jpg").unlink()
+    await index_partition(backend, "")
+
+    rows = await _rows(backend)
+    assert [r["filename"] for r in rows] == ["b.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_representative_keeps_indexed_copy(tmpdir: Path) -> None:
+    """Same, when the remaining copy already had its own (duplicate-key) row."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "b.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    await _seed_duplicate_row(backend, "a.jpg", "b.jpg")
+
+    (tmpdir / "a.jpg").unlink()
+    await index_partition(backend, "")
+
+    rows = await _rows(backend)
+    assert [r["filename"] for r in rows] == ["b.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_swapped_content_keeps_both_rows(tmpdir: Path) -> None:
+    """Two files swap bytes: both stay indexed, with each other's former hash."""
+    (tmpdir / "x.jpg").write_bytes(_unique_jpeg(0))
+    (tmpdir / "y.jpg").write_bytes(_unique_jpeg(1))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    before = {r["filename"]: r["content_hash"] for r in await _rows(backend)}
+
+    (tmpdir / "x.jpg").write_bytes(_unique_jpeg(1))
+    (tmpdir / "y.jpg").write_bytes(_unique_jpeg(0))
+    await index_partition(backend, "", force_full_index=True, force_extract_exif=True)
+
+    after = {r["filename"]: r["content_hash"] for r in await _rows(backend)}
+    assert after == {"x.jpg": before["y.jpg"], "y.jpg": before["x.jpg"]}
+
+
+async def _failing_extract(xmp_store, photo_path, force_extract_exif):
+    raise OSError("transient read error")
+
+
+@pytest.mark.asyncio
+async def test_repair_keeps_rows_when_holder_fails_extraction(tmpdir: Path) -> None:
+    """A duplicate-key hash is not deleted when the only file holding it fails
+    extraction: nothing could write it back, and the photo would vanish."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    await _seed_duplicate_row(backend, "a.jpg", "a.jpg")
+
+    with patch("whitebeard.indexer._extract_one", side_effect=_failing_extract):
+        result = await index_partition(backend, "")
+
+    assert result.errors == 1
+    assert {r["filename"] for r in await _rows(backend)} == {"a.jpg"}
+
+    # A later run with a healthy read completes the repair.
+    await index_partition(backend, "")
+    assert len(await _rows(backend)) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_file_is_processed_once(tmpdir: Path) -> None:
+    """In full mode, a file that fails extraction and holds a stale hash is not
+    retried by the write-back loop: counts stay consistent."""
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    await _seed_duplicate_row(backend, "a.jpg", "a.jpg")
+
+    with patch("whitebeard.indexer._extract_one", side_effect=_failing_extract):
+        result = await index_partition(backend, "", force_full_index=True)
+
+    assert result.photos_processed == 1
+    assert result.photos_skipped == 0
+    assert result.errors == 1
+    assert len(result.error_details) == 1
+
+
+@pytest.mark.asyncio
+async def test_reprocessed_file_with_new_hash_gets_thumbnail(tmpdir: Path) -> None:
+    """A re-processed, already-indexed filename whose hash is new has no
+    thumbnail to carry over, so it is passed to the thumbnail builder."""
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    # Leftover of cause A: a second row for the filename, under another hash.
+    (row,) = await _rows(backend)
+    idx = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    await idx._table.add(
+        pa.Table.from_pylist([{**row, "content_hash": "old_hash"}], schema=PHOTO_SCHEMA)
+    )
+    (tmpdir / "photo.jpg").write_bytes(_unique_jpeg(1))
+
+    thumbnail_call_args: list = []
+
+    async def capturing_thumbnails(b, partition, entries, tier):
+        thumbnail_call_args.append([e.filename for e in entries])
+        return []
+
+    with patch(
+        "whitebeard.indexer.generate_partition_thumbnails",
+        side_effect=capturing_thumbnails,
+    ):
+        await index_partition(backend, "", generate_thumbnails=True, force_extract_exif=True)
+
+    assert thumbnail_call_args == [["photo.jpg"]]
+    rows = await _rows(backend)
+    assert len(rows) == 1
+    assert rows[0]["content_hash"] not in {row["content_hash"], "old_hash"}
+
+
+# ---------------------------------------------------------------------------
+# Deleted partition cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_library_removes_stale_partition_from_lance(tmpdir: Path) -> None:
+    """After a partition directory is deleted, the next library run removes it from LanceDB."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "B").mkdir()
+    (tmpdir / "B" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    # Delete partition B from disk.
+    shutil.rmtree(tmpdir / "B")
+
+    result = await index_library(backend)
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    assert "B" not in await lance_index.list_partitions()
+    assert result.partitions_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_index_library_deletes_stale_partition_metadata_files(tmpdir: Path) -> None:
+    """After a partition directory is deleted, the next library run deletes its metadata dir."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    # Confirm metadata dir was created.
+    metadata_dir = tmpdir / ".ouestcharlie" / "A"
+    assert metadata_dir.exists()
+
+    # Delete partition A from disk.
+    shutil.rmtree(tmpdir / "A")
+
+    await index_library(backend)
+
+    assert not metadata_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_index_library_does_not_touch_active_partitions(tmpdir: Path) -> None:
+    """Active partitions are left intact when a different partition is deleted."""
+    (tmpdir / "Keep").mkdir()
+    (tmpdir / "Keep" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "Gone").mkdir()
+    (tmpdir / "Gone" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+    shutil.rmtree(tmpdir / "Gone")
+    await index_library(backend)
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    assert "Keep" in await lance_index.list_partitions()
+
+
+@pytest.mark.asyncio
+async def test_index_library_partitions_deleted_count(tmpdir: Path) -> None:
+    """partitions_deleted reflects the number of stale partitions removed."""
+    for name in ("X", "Y", "Z"):
+        (tmpdir / name).mkdir()
+        (tmpdir / name / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+
+    shutil.rmtree(tmpdir / "X")
+    shutil.rmtree(tmpdir / "Z")
+
+    result = await index_library(backend)
+
+    assert result.partitions_deleted == 2
+
+
+# ---------------------------------------------------------------------------
+# index_partition_scope — explicit multi-folder indexing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_indexes_only_listed_partitions(tmpdir: Path) -> None:
+    """Only the given partition_scope entries are indexed, not the whole tree."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-08").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-08" / "b.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "2024" / "2024-09").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-09" / "c.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    await SummaryStore(backend).write_full_summary(RootSummary(schema_version=SCHEMA_VERSION))
+
+    result = await index_partition_scope(backend, ["2024/2024-07", "2024/2024-08"])
+
+    assert isinstance(result, LibraryIndexResult)
+    assert len(result.partitions) == 2
+    assert result.total_photos_processed == 2
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    partitions = await lance_index.list_partitions()
+    assert "2024/2024-07" in partitions
+    assert "2024/2024-08" in partitions
+    assert "2024/2024-09" not in partitions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    ["2024/2024-07?", "2024-07", "missing", "2024/2024-07/a.jpg", "/2024/2024-07", "../2024"],
+)
+async def test_index_partition_scope_rejects_missing_partition(tmpdir: Path, bad: str) -> None:
+    """A scope entry that is not an existing folder fails the whole run, naming
+    the entry, before any partition is indexed."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    await SummaryStore(backend).write_full_summary(RootSummary(schema_version=SCHEMA_VERSION))
+
+    with pytest.raises(ValueError, match="not found") as exc_info:
+        await index_partition_scope(backend, ["2024/2024-07", bad])
+
+    listed = str(exc_info.value).split(". Paths are")[0]
+    assert listed.endswith(repr(bad))  # only the bad entry is listed
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME, create_if_missing=True)
+    assert await lance_index.list_partitions() == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("good", ["", "2024", "2024/2024-07", "2024/2024-07/"])
+async def test_index_partition_scope_accepts_existing_partition(tmpdir: Path, good: str) -> None:
+    """The library root, a parent folder and a trailing slash are all accepted."""
+    (tmpdir / "2024" / "2024-07").mkdir(parents=True)
+    (tmpdir / "2024" / "2024-07" / "a.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    await SummaryStore(backend).write_full_summary(RootSummary(schema_version=SCHEMA_VERSION))
+
+    result = await index_partition_scope(backend, [good])
+
+    assert len(result.partitions) == 1
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_does_not_prune_out_of_scope_partitions(
+    tmpdir: Path,
+) -> None:
+    """Partitions outside the scope are left untouched, even if deleted from disk."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    (tmpdir / "B").mkdir()
+    (tmpdir / "B" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    await index_library(backend)
+    shutil.rmtree(tmpdir / "B")
+
+    # Only re-index A — B is gone from disk but out of scope, so must not be pruned.
+    await index_partition_scope(backend, ["A"])
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    assert "B" in await lance_index.list_partitions()
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_does_not_write_summary(tmpdir: Path) -> None:
+    """A scoped run must not write summary.json — it only checks it, never updates it."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    store = SummaryStore(backend)
+    await store.write_full_summary(RootSummary(schema_version=SCHEMA_VERSION))
+    before, _ = await store.read_summary()
+
+    await index_partition_scope(backend, ["A"])
+
+    after, _ = await store.read_summary()
+    assert after.schema_version == before.schema_version
+    assert after.last_indexed_at == before.last_indexed_at
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_raises_when_summary_missing(tmpdir: Path) -> None:
+    """Without a prior full index (no summary.json), scoped indexing refuses to run."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+
+    with pytest.raises(ValueError, match="full index"):
+        await index_partition_scope(backend, ["A"])
+
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME, create_if_missing=True)
+    assert await lance_index.list_partitions() == set()
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_raises_when_schema_too_old(tmpdir: Path) -> None:
+    """A version below the lowest supported means scoped indexing must refuse."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    store = SummaryStore(backend)
+    await store.write_full_summary(RootSummary(schema_version=LOWEST_SCHEMA_VERSION - 1))
+
+    with pytest.raises(ValueError, match="older"):
+        await index_partition_scope(backend, ["A"])
+
+    unchanged, _ = await store.read_summary()
+    assert unchanged.schema_version == LOWEST_SCHEMA_VERSION - 1
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME, create_if_missing=True)
+    assert await lance_index.list_partitions() == set()
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_accepts_compatible_window(tmpdir: Path) -> None:
+    """A version within [LOWEST, SCHEMA_VERSION] is accepted by a scoped run."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    await index_library(backend)  # establishes a real index + manifests
+
+    # Downgrade the marker to the lowest supported version — still in the window.
+    store = SummaryStore(backend)
+    _current, version = await store.read_summary()
+    await store.write_summary(RootSummary(schema_version=LOWEST_SCHEMA_VERSION), version)
+
+    result = await index_partition_scope(backend, ["A"])  # must not raise
+    assert result.partitions
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_raises_when_schema_newer(tmpdir: Path) -> None:
+    """A newer-than-supported schema version means scoped indexing must refuse."""
+    (tmpdir / "A").mkdir()
+    (tmpdir / "A" / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    store = SummaryStore(backend)
+    await store.write_full_summary(RootSummary(schema_version=SCHEMA_VERSION + 1))
+
+    with pytest.raises(ValueError, match="newer"):
+        await index_partition_scope(backend, ["A"])
+
+    unchanged, _ = await store.read_summary()
+    assert unchanged.schema_version == SCHEMA_VERSION + 1
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME, create_if_missing=True)
+    assert await lance_index.list_partitions() == set()
+
+
+@pytest.mark.asyncio
+async def test_index_partition_scope_progress_callback_called_for_each_partition(
+    tmpdir: Path,
+) -> None:
+    for name in ("A", "B"):
+        (tmpdir / name).mkdir()
+        (tmpdir / name / "p.jpg").write_bytes(_MINIMAL_JPEG)
+    backend = LocalBackend(root=tmpdir)
+    await SummaryStore(backend).write_full_summary(RootSummary(schema_version=SCHEMA_VERSION))
+
+    calls = []
+
+    async def on_progress(current, total, name, duration_ms, photos):
+        calls.append((current, total, name))
+
+    await index_partition_scope(backend, ["A", "B"], on_progress=on_progress)
+
+    assert len(calls) == 2
+    assert {c[2] for c in calls} == {"A", "B"}
+    assert all(c[1] == 2 for c in calls)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical tags — darktable sidecars and excluded tag prefixes
+# ---------------------------------------------------------------------------
+
+_DARKTABLE_SIDECAR = """\
+<x:xmpmeta xmlns:x='adobe:ns:meta/'>
+ <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
+  <rdf:Description rdf:about=''
+    xmlns:dc='http://purl.org/dc/elements/1.1/'
+    xmlns:lr='http://ns.adobe.com/lightroom/1.0/'
+    xmlns:darktable='http://darktable.sf.net/'>
+   <dc:subject><rdf:Bag>
+    <rdf:li>darktable</rdf:li><rdf:li>format</rdf:li><rdf:li>jpg</rdf:li>
+    <rdf:li>Places</rdf:li><rdf:li>Europe</rdf:li><rdf:li>Paris</rdf:li>
+   </rdf:Bag></dc:subject>
+   <lr:hierarchicalSubject><rdf:Bag>
+    <rdf:li>darktable|format|jpg</rdf:li>
+    <rdf:li>Places|Europe|Paris</rdf:li>
+   </rdf:Bag></lr:hierarchicalSubject>
+   <darktable:history><rdf:Seq/></darktable:history>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"""
+
+
+async def _indexed_tags(backend: LocalBackend) -> tuple[list[str], list[str]]:
+    lance_index = await LanceIndex.open(backend, PHOTO_TABLE_NAME)
+    rows = [r async for r in lance_index.get_partition_rows("", columns=["tags", "tag_terms"])]
+    assert len(rows) == 1
+    return rows[0]["tags"], rows[0]["tag_terms"]
+
+
+@pytest.mark.asyncio
+async def test_index_darktable_sidecar_excludes_darktable_tags_by_default(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    (tmpdir / "001.jpg.xmp").write_text(_DARKTABLE_SIDECAR, encoding="utf-8")
+    await index_partition(backend_with_sample, "")
+    tags, terms = await _indexed_tags(backend_with_sample)
+    assert tags == ["Places|Europe|Paris"]
+    # tag_terms are folded for case-insensitive search; tags keep their spelling
+    assert terms == ["places", "places|europe", "places|europe|paris", "europe", "paris"]
+    # Indexing reads the sidecar without rewriting it.
+    assert (tmpdir / "001.jpg.xmp").read_text(encoding="utf-8") == _DARKTABLE_SIDECAR
+
+
+@pytest.mark.asyncio
+async def test_index_custom_excluded_tag_prefixes(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    (tmpdir / "001.jpg.xmp").write_text(_DARKTABLE_SIDECAR, encoding="utf-8")
+    await index_partition(backend_with_sample, "", excluded_tag_prefixes=["Places"])
+    tags, _ = await _indexed_tags(backend_with_sample)
+    assert tags == ["darktable|format|jpg"]
+
+
+@pytest.mark.asyncio
+async def test_index_library_passes_excluded_tag_prefixes(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    (tmpdir / "001.jpg.xmp").write_text(_DARKTABLE_SIDECAR, encoding="utf-8")
+    await index_library(backend_with_sample, excluded_tag_prefixes=[])
+    tags, _ = await _indexed_tags(backend_with_sample)
+    assert tags == ["darktable|format|jpg", "Places|Europe|Paris"]
+
+
+# ---------------------------------------------------------------------------
+# Incremental mode — sidecars changed by other tools
+# ---------------------------------------------------------------------------
+
+_SAMPLES = Path(__file__).parent / "sample-images"
+
+
+def _rewrite_sidecar(path: Path, xml: str) -> None:
+    """Write ``xml`` to a sidecar with a later mtime, as another tool would."""
+    old_ns = path.stat().st_mtime_ns if path.exists() else 0
+    path.write_text(xml, encoding="utf-8")
+    new_ns = max(path.stat().st_mtime_ns, old_ns + 1_000_000_000)
+    os.utime(path, ns=(new_ns, new_ns))
+
+
+def _edit_sidecar(path: Path, **fields: object) -> None:
+    sidecar = parse_xmp(path.read_text(encoding="utf-8"))
+    for name, value in fields.items():
+        setattr(sidecar, name, value)
+    _rewrite_sidecar(path, serialize_xmp(sidecar))
+
+
+def _row(rows: list[dict], filename: str) -> dict:
+    return next(r for r in rows if r["filename"] == filename)
+
+
+@pytest.mark.asyncio
+async def test_incremental_picks_up_sidecar_edit(tmpdir: Path) -> None:
+    for i in range(3):
+        (tmpdir / f"p{i}.jpg").write_bytes(_unique_jpeg(i))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+
+    _edit_sidecar(tmpdir / "p1.jpg.xmp", rating=4, description="Edited elsewhere")
+    result = await index_partition(backend, "")
+
+    assert result.sidecars_changed == 1
+    assert result.photos_processed == 1
+    assert result.photos_skipped == 2
+    assert result.sidecars_created == 0
+    rows = await _rows(backend)
+    _assert_unique_keys(rows)
+    row = _row(rows, "p1.jpg")
+    assert row["rating"] == 4
+    assert row["description"] == "Edited elsewhere"
+    assert row["xmp_version_token"] == str((tmpdir / "p1.jpg.xmp").stat().st_mtime_ns)
+
+
+@pytest.mark.asyncio
+async def test_incremental_sidecar_edit_keeps_thumbnail(tmpdir: Path) -> None:
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+
+    async def fake_thumbnails(b, partition, entries, tier):
+        order = [e.content_hash for e in entries]
+        return [SimpleNamespace(avif_hash="avif0", grid=SimpleNamespace(photo_order=order))]
+
+    with patch("whitebeard.indexer.generate_partition_thumbnails", side_effect=fake_thumbnails):
+        await index_partition(backend, "", generate_thumbnails=True)
+    (before,) = await _rows(backend)
+    assert before["thumbnail_avif_hash"] == "avif0"
+
+    _edit_sidecar(tmpdir / "a.jpg.xmp", rating=5)
+    calls = 0
+
+    async def counting_thumbnails(b, partition, entries, tier):
+        nonlocal calls
+        calls += 1
+        return []
+
+    with patch("whitebeard.indexer.generate_partition_thumbnails", side_effect=counting_thumbnails):
+        result = await index_partition(backend, "", generate_thumbnails=True)
+
+    assert result.sidecars_changed == 1
+    assert calls == 0
+    assert result.thumbnails_rebuilt is False
+    (after,) = await _rows(backend)
+    assert after["rating"] == 5
+    assert after["content_hash"] == before["content_hash"]
+    assert after["thumbnail_avif_hash"] == before["thumbnail_avif_hash"]
+    assert after["thumbnail_tile_index"] == before["thumbnail_tile_index"]
+
+
+@pytest.mark.asyncio
+async def test_incremental_skips_unchanged_sidecar(tmpdir: Path) -> None:
+    for i in range(2):
+        (tmpdir / f"p{i}.jpg").write_bytes(_unique_jpeg(i))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    await index_partition(backend, "")
+
+    reads = 0
+    original_read = XmpStore.read
+
+    async def counting_read(self, photo_path):
+        nonlocal reads
+        reads += 1
+        return await original_read(self, photo_path)
+
+    with patch.object(XmpStore, "read", counting_read):
+        result = await index_partition(backend, "")
+
+    assert result.photos_processed == 0
+    assert result.photos_skipped == 2
+    assert result.sidecars_changed == 0
+    assert reads == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_recreates_deleted_sidecar(tmpdir: Path) -> None:
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    (tmpdir / "a.jpg.xmp").unlink()
+
+    result = await index_partition(backend, "")
+
+    assert result.sidecars_changed == 1
+    assert result.sidecars_created == 1
+    assert (tmpdir / "a.jpg.xmp").exists()
+    (row,) = await _rows(backend)
+    assert row["xmp_version_token"] == str((tmpdir / "a.jpg.xmp").stat().st_mtime_ns)
+    # The re-created sidecar is now current: the next run skips the photo.
+    again = await index_partition(backend, "")
+    assert again.photos_processed == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_follows_new_full_extension_sidecar(tmpdir: Path) -> None:
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    # Turn the sidecar into the extension-stripped form (Lightroom), rated 2.
+    stripped = tmpdir / "a.xmp"
+    (tmpdir / "a.jpg.xmp").rename(stripped)
+    _edit_sidecar(stripped, rating=2)
+    await index_partition(backend, "")
+    (row,) = await _rows(backend)
+    assert row["rating"] == 2
+
+    # darktable then writes its own full-extension sidecar, rated 3.
+    sidecar = parse_xmp(stripped.read_text(encoding="utf-8"))
+    sidecar.rating = 3
+    _rewrite_sidecar(tmpdir / "a.jpg.xmp", serialize_xmp(sidecar))
+    result = await index_partition(backend, "")
+
+    assert result.sidecars_changed == 1
+    (row,) = await _rows(backend)
+    assert row["rating"] == 3
+    assert row["xmp_version_token"] == str((tmpdir / "a.jpg.xmp").stat().st_mtime_ns)
+
+
+@pytest.mark.asyncio
+async def test_incremental_darktable_sidecar(
+    backend_with_sample: LocalBackend, tmpdir: Path
+) -> None:
+    await index_partition(backend_with_sample, "")
+    (before,) = await _rows(backend_with_sample)
+
+    # darktable keeps ouestcharlie:contentHash when it rewrites the sidecar.
+    xml = (
+        (_SAMPLES / "001.darktable.ref.xmp")
+        .read_text(encoding="utf-8")
+        .replace("KfAbc123A2nBcR8xYvLm1P", before["content_hash"])
+        .replace(
+            "<rdf:li>darktable|format|jpg</rdf:li>",
+            "<rdf:li>darktable|format|jpg</rdf:li>\n     <rdf:li>Places|Europe|Paris</rdf:li>",
+        )
+    )
+    _rewrite_sidecar(tmpdir / "001.jpg.xmp", xml)
+    result = await index_partition(backend_with_sample, "")
+
+    assert result.sidecars_changed == 1
+    (after,) = await _rows(backend_with_sample)
+    assert after["content_hash"] == before["content_hash"]
+    assert after["rating"] == 1
+    assert after["tags"] == ["Places|Europe|Paris"]
+    assert after["date_taken"] == before["date_taken"]
+    assert after["date_taken_utc"] == before["date_taken_utc"]
+
+
+def _case_insensitive_fs(path: Path) -> bool:
+    probe = path / "CaseProbe"
+    probe.touch()
+    try:
+        return (path / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.asyncio
+async def test_incremental_case_variant_sidecar_wins_like_reader(tmpdir: Path) -> None:
+    """On a case-insensitive filesystem the reader opens ``a.JPG.xmp`` for
+    ``a.jpg`` even when ``a.xmp`` exists: the token must come from the same file,
+    or the photo is re-processed at every run."""
+    if not _case_insensitive_fs(tmpdir):
+        pytest.skip("needs a case-insensitive filesystem")
+    (tmpdir / "a.jpg").write_bytes(_unique_jpeg(0))
+    backend = LocalBackend(root=tmpdir)
+    await index_partition(backend, "")
+    (tmpdir / "a.jpg.xmp").rename(tmpdir / "a.JPG.xmp")
+    stripped = parse_xmp((tmpdir / "a.JPG.xmp").read_text(encoding="utf-8"))
+    stripped.rating = 1
+    _rewrite_sidecar(tmpdir / "a.xmp", serialize_xmp(stripped))
+    _edit_sidecar(tmpdir / "a.JPG.xmp", rating=4)
+
+    first = await index_partition(backend, "")
+    second = await index_partition(backend, "")
+
+    assert first.sidecars_changed == 1
+    (row,) = await _rows(backend)
+    assert row["rating"] == 4
+    assert second.photos_processed == 0

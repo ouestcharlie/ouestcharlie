@@ -1,0 +1,825 @@
+"""Core indexing logic for Whitebeard — no MCP dependency."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections.abc import Awaitable, Callable, Generator, Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from itertools import chain, islice
+from pathlib import Path, PurePath
+
+from ouestcharlie_toolkit.index import PHOTO_TABLE_NAME, LanceIndex, SummaryStore
+from ouestcharlie_toolkit.media import PHOTO_SUFFIXES, VIDEO_SUFFIXES
+from ouestcharlie_toolkit.model import (
+    DEFAULT_EXCLUDED_TAG_PREFIXES,
+    LOWEST_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+    PhotoEntry,
+    RootSummary,
+    ThumbnailChunk,
+)
+from ouestcharlie_toolkit.renditions import (
+    delete_partition_thumbnails,
+    generate_partition_thumbnails,
+)
+from ouestcharlie_toolkit.storage import METADATA_DIR, Backend
+from ouestcharlie_toolkit.xmp import XmpStore, sidecar_candidates
+
+_log = logging.getLogger(__name__)
+
+# Maximum number of partitions indexed concurrently. Kept low because thumbnail
+# generation is already multi-threaded internally.
+_MAX_CONCURRENT_PARTITIONS = 4
+
+# Maximum number of errors to report
+_TOP_ERRORS = 10
+
+# All media extensions discovered during indexing (photos + videos). Files are
+# dispatched per-suffix inside XmpStore.read_or_create_from_picture: photos go
+# through EXIF extraction, videos (VIDEO_SUFFIXES) through container extraction.
+MEDIA_EXTENSIONS: frozenset[str] = PHOTO_SUFFIXES | VIDEO_SUFFIXES
+
+
+@dataclass
+class IndexResult:
+    """Result of indexing a single partition."""
+
+    partition: str
+    photos_processed: int = 0
+    photos_skipped: int = 0  # photos already in manifest, carried over without re-processing
+    photos_deleted: int = 0  # photos in previous manifest but no longer on disk
+    sidecars_created: int = 0
+    sidecars_changed: int = 0  # indexed photos re-processed because their sidecar changed
+    sidecars_skipped: int = 0
+    errors: int = 0
+    error_details: list[str] = field(default_factory=list)
+    thumbnails_rebuilt: bool = False
+    duration_ms: int = 0
+
+
+@dataclass
+class LibraryIndexResult:
+    """Result of indexing an entire photo library (all partitions)."""
+
+    partitions: list[IndexResult] = field(default_factory=list)
+    total_duration_ms: int = 0  # wall-clock time for the full library run
+    partitions_deleted: int = 0  # stale partitions removed from the LanceDB index
+
+    @property
+    def total_photos_processed(self) -> int:
+        return sum(r.photos_processed for r in self.partitions)
+
+    @property
+    def total_photos_skipped(self) -> int:
+        return sum(r.photos_skipped for r in self.partitions)
+
+    @property
+    def total_photos_deleted(self) -> int:
+        return sum(r.photos_deleted for r in self.partitions)
+
+    @property
+    def total_sidecars_created(self) -> int:
+        return sum(r.sidecars_created for r in self.partitions)
+
+    @property
+    def total_sidecars_changed(self) -> int:
+        return sum(r.sidecars_changed for r in self.partitions)
+
+    @property
+    def total_errors(self) -> int:
+        return sum(r.errors for r in self.partitions)
+
+    @property
+    def total_thumbnails_rebuilt(self) -> int:
+        return sum(1 for r in self.partitions if r.thumbnails_rebuilt)
+
+    @property
+    def top_error_details(self) -> Generator[str]:
+        yield from islice(
+            chain.from_iterable(r.error_details for r in self.partitions), _TOP_ERRORS
+        )
+
+
+async def index_partition(
+    backend: Backend,
+    partition: str,
+    force_extract_exif: bool = False,
+    generate_thumbnails: bool = False,
+    force_full_index: bool = False,
+    lance_index: LanceIndex | None = None,
+    lance_index_path: Path | None = None,
+    excluded_tag_prefixes: Iterable[str] = DEFAULT_EXCLUDED_TAG_PREFIXES,
+) -> IndexResult:
+    """Index all photos in a partition (index mode — files stay in place).
+
+    By default (``force_full_index=False``) runs in incremental mode: photos
+    already indexed whose sidecar is unchanged are carried over without
+    re-processing (nor reading their sidecar). New photos, and photos whose
+    sidecar was rewritten (e.g. by darktable), created, deleted or replaced by
+    the other naming form since the last index, go through ``_extract_one``.
+    A change is detected by comparing the sidecar's version token from the
+    directory listing with the one stored in the index (equality, not order);
+    a sidecar whose mtime is set back to the indexed value is not detected.
+
+    With ``force_full_index=True`` all photos are re-processed regardless of
+    the existing manifest, matching the previous unconditional behaviour.
+
+    Regardless of mode, photos present in the existing index but no longer on
+    disk are always detected, logged, and removed — deletion detection is not
+    conditional on ``force_full_index``.
+
+    Every run also enforces one row per ``content_hash`` and per filename:
+    rows for a replaced hash and duplicate-key rows are deleted before the
+    upsert, and identical copies share one row under a stable filename.
+
+    Thumbnails are generated incrementally: a new AVIF chunk is appended for
+    newly-processed photos only; existing chunks in the manifest are preserved.
+    Use ``force_full_index=True`` to regenerate thumbnails from scratch.
+
+    After processing all photos, creates or updates the leaf manifest for the
+    partition (at ``<partition>/.ouestcharlie/manifest.json``).
+
+    Args:
+        backend: Backend to read/write.
+        partition: Folder path relative to backend root (e.g. "" for root,
+            "Vacations/Italy 2023/" for a subfolder). Trailing slash optional.
+        force_extract_exif: If True, re-extract EXIF and overwrite existing
+            XMP sidecars.  If False (default), existing sidecars are reused.
+            Orthogonal to ``force_full_index``.
+        generate_thumbnails: If True, generate the thumbnail AVIF container
+            after indexing.  Requires the image-proc binary.
+            Defaults to False; the MCP agent sets this to True.
+            Preview JPEGs are generated lazily on-demand by Wally HTTP.
+        force_full_index: If True, re-process all photos regardless of the
+            existing manifest.  If False (default), photos already present in
+            the manifest are carried over without calling ``_extract_one``.
+        lance_index: Pre-opened LanceIndex to reuse.  When called from
+            ``index_library`` this is the shared instance created once before
+            any concurrent tasks run, preventing concurrent ``create_table``
+            calls that cause Lance MVCC conflicts.  Pass ``None`` (default)
+            when calling ``index_partition`` directly; it will open its own.
+        excluded_tag_prefixes: Tag paths kept out of the index (library
+            setting, see ``ouestcharlie_toolkit.tags``). Defaults to
+            ``DEFAULT_EXCLUDED_TAG_PREFIXES``.
+
+    Returns:
+        IndexResult with counts of processed, skipped, deleted, created, and
+        failed photos.
+    """
+    _t0 = time.monotonic()
+    result = IndexResult(partition=partition)
+    xmp_store = XmpStore(backend, excluded_tag_prefixes)
+    if lance_index is None:
+        lance_index = await LanceIndex.open(
+            backend,
+            PHOTO_TABLE_NAME,
+            create_if_missing=True,
+            index_path=lance_index_path,
+        )
+
+    # List direct-child media files (photos + videos) and their sidecars in one
+    # call — read-only, no lock needed.
+    listed = await backend.list_files(partition, MEDIA_EXTENSIONS | {".xmp"})
+    photo_files = [f for f in listed if PurePath(f.path).suffix.lower() != ".xmp"]
+    disk_filenames: set[str] = {PurePath(f.path).name for f in photo_files}
+    # Sidecar filename → version token, in the string form stored in the index.
+    sidecar_tokens: dict[str, str] = {
+        PurePath(f.path).name: str(f.version.value)
+        for f in listed
+        if PurePath(f.path).suffix.lower() == ".xmp"
+    }
+    # Case-insensitive fallback, matching what the reader opens on a
+    # case-insensitive filesystem (e.g. ``IMG_001.JPG.XMP``).
+    sidecar_tokens_folded = {name.casefold(): t for name, t in sidecar_tokens.items()}
+
+    def current_token(photo_path: str) -> str | None:
+        """Token of the sidecar the reader would open, or None without sidecar.
+
+        Candidates are tried in the reader's order, each one exactly then
+        case-insensitively, as the reader's existence check behaves on a
+        case-insensitive filesystem: a case variant of the full-extension
+        form wins over an exact extension-stripped one.
+        """
+        for candidate in sidecar_candidates(photo_path):
+            name = PurePath(candidate).name
+            token = sidecar_tokens.get(name) or sidecar_tokens_folded.get(name.casefold())
+            if token is not None:
+                return token
+        return None
+
+    # Hold the partition lock for the entire read → process → write cycle so
+    # that no other agent can interleave writes on the same partition.
+    async with backend.partition_lock(partition):
+        # Load every existing row from LanceDB — needed to skip already-indexed
+        # photos in incremental mode, to detect photos deleted from disk (in
+        # every mode), and to repair stale or duplicate rows. A filename may
+        # hold several rows (its hash changed) and a hash may hold several rows
+        # (identical copies indexed before OEC-11b), so keep them all.
+        hashes_by_filename: dict[str, set[str]] = {}
+        filenames_by_hash: dict[str, set[str]] = {}
+        rows_per_hash: dict[str, int] = {}
+        existing_thumbs: dict[str, tuple[str, int]] = {}
+        indexed_tokens: dict[str, str] = {}
+        async for row in lance_index.get_partition_rows(
+            partition,
+            columns=[
+                "filename",
+                "content_hash",
+                "xmp_version_token",
+                "thumbnail_avif_hash",
+                "thumbnail_tile_index",
+            ],
+        ):
+            fn, h = row["filename"], row["content_hash"]
+            hashes_by_filename.setdefault(fn, set()).add(h)
+            indexed_tokens[fn] = str(row.get("xmp_version_token") or "")
+            filenames_by_hash.setdefault(h, set()).add(fn)
+            rows_per_hash[h] = rows_per_hash.get(h, 0) + 1
+            avif, tile = row.get("thumbnail_avif_hash"), row.get("thumbnail_tile_index")
+            if avif is not None and tile is not None:
+                existing_thumbs[h] = (str(avif), int(tile))
+        deleted_filenames = hashes_by_filename.keys() - disk_filenames
+        result.photos_deleted = len(deleted_filenames)
+        if deleted_filenames:
+            _log.info(
+                "Index — %d photo(s) removed from disk since last index — partition=%r: %s",
+                len(deleted_filenames),
+                partition,
+                ", ".join(sorted(deleted_filenames)),
+            )
+
+        photo_entries: list[PhotoEntry] = []
+        path_by_filename: dict[str, str] = {}
+        attempted: set[str] = set()  # every filename passed to _process
+        failed: set[str] = set()  # filenames whose extraction raised
+
+        async def _process(photo_path: str) -> None:
+            filename = PurePath(photo_path).name
+            attempted.add(filename)
+            result.photos_processed += 1
+            try:
+                entry, created = await _extract_one(xmp_store, photo_path, force_extract_exif)
+                photo_entries.append(entry)
+                if created:
+                    result.sidecars_created += 1
+                else:
+                    result.sidecars_skipped += 1
+            except Exception as exc:
+                _log.error(
+                    "Failed to process photo — partition=%r file=%r: %s",
+                    partition,
+                    filename,
+                    exc,
+                    exc_info=True,
+                )
+                failed.add(filename)
+                result.errors += 1
+                result.error_details.append(f"{filename}: {exc}")
+
+        sidecar_changed: list[str] = []
+        for file_info in photo_files:
+            filename = PurePath(file_info.path).name
+            path_by_filename[filename] = file_info.path
+            # An indexed photo whose sidecar was rewritten, created, deleted or
+            # replaced by the other naming form: re-read it to pick up edits made
+            # by other tools. The content hash survives a sidecar-only edit, so
+            # the row is updated in place and its thumbnail kept.
+            token = current_token(file_info.path)
+            changed = filename in hashes_by_filename and token != indexed_tokens[filename]
+            if changed:
+                sidecar_changed.append(filename)
+            # A filename with several rows had its hash change: re-process it
+            # even in incremental mode to learn which hash is current.
+            if force_full_index or changed or len(hashes_by_filename.get(filename, ())) != 1:
+                await _process(file_info.path)
+            else:
+                result.photos_skipped += 1
+        result.sidecars_changed = len(sidecar_changed)
+        if sidecar_changed:
+            _log.info(
+                "Index — %d sidecar(s) changed since last index — partition=%r: %s",
+                len(sidecar_changed),
+                partition,
+                ", ".join(sorted(sidecar_changed)),
+            )
+
+        # Hashes whose rows must be deleted before the upsert:
+        #   - every hash of a file gone from disk;
+        #   - every hash of a duplicate merge key (two rows share one hash);
+        #   - every former hash of a re-processed file whose hash changed.
+        stale_hashes: set[str] = {h for fn in deleted_filenames for h in hashes_by_filename[fn]}
+        stale_hashes |= {h for h, n in rows_per_hash.items() if n > 1}
+
+        # A stale hash may still be held by a file skipped in incremental mode
+        # (another copy of a deleted file, or a duplicate-key row). Deleting it
+        # would drop that photo, so re-process its representative to write the
+        # row back. Extraction reuses the sidecar, so this is cheap. Loop because
+        # a re-processed file may reveal a changed hash, itself stale. Files
+        # already attempted (including failed ones) are never retried.
+        while True:
+            processed = {e.filename: e.content_hash for e in photo_entries}
+            for fn, h in processed.items():
+                stale_hashes |= hashes_by_filename.get(fn, set()) - {h}
+            held = set(processed.values())
+            backfill = {
+                min(candidates)
+                for h in stale_hashes - held
+                if (
+                    candidates := [
+                        fn
+                        for fn in filenames_by_hash.get(h, ())
+                        if fn in disk_filenames and fn not in attempted
+                    ]
+                )
+            }
+            if not backfill:
+                break
+            for fn in sorted(backfill):
+                result.photos_skipped -= 1
+                await _process(path_by_filename[fn])
+
+        # A stale hash still indexed under an on-disk file that failed
+        # extraction cannot be written back: keep its rows rather than drop the
+        # photo. A later run with a healthy read completes the repair.
+        unwritable = {
+            h
+            for h in stale_hashes - held
+            if any(fn in failed for fn in filenames_by_hash.get(h, ()))
+        }
+        if unwritable:
+            _log.warning(
+                "Keeping %d stale row hash(es) whose file failed extraction — partition=%r",
+                len(unwritable),
+                partition,
+            )
+            stale_hashes -= unwritable
+
+        # Keep the representative copy stable: when a hash is still held by a
+        # filename already indexed under it, that filename stays the row's name
+        # and the other copies are dropped. A stale hash is written back only
+        # from processed files, so its representative must be one of them.
+        # Otherwise the smallest processed filename is the representative, so
+        # upsert_partition never receives two entries with one hash.
+        # Skipped files have exactly one indexed hash, taken as current.
+        current_hash: dict[str, str] = {
+            fn: next(iter(hs))
+            for fn, hs in hashes_by_filename.items()
+            if fn in disk_filenames and len(hs) == 1
+        }
+        current_hash.update(processed)
+        representative: dict[str, str] = {}
+        for h in held:
+            incumbents = [
+                fn
+                for fn in filenames_by_hash.get(h, ())
+                if current_hash.get(fn) == h and (h not in stale_hashes or fn in processed)
+            ]
+            representative[h] = min(incumbents or (fn for fn, fh in processed.items() if fh == h))
+        kept_entries: list[PhotoEntry] = []
+        for entry in photo_entries:
+            rep = representative[entry.content_hash]
+            if rep != entry.filename:
+                _log.debug(
+                    "Identical copy of %r — partition=%r: skipping %r",
+                    rep,
+                    partition,
+                    entry.filename,
+                )
+                continue
+            kept_entries.append(entry)
+        photo_entries = kept_entries
+
+        # Collect new entries for thumbnail purposes: media not previously in the
+        # index, or re-processed with a hash never indexed (no thumbnail to carry
+        # over). Videos are included: the thumbnail builder decodes each video's
+        # cover frame and tiles it into the AVIF grid like any photo.
+        new_entries = [
+            e
+            for e in photo_entries
+            if e.filename not in hashes_by_filename or e.content_hash not in filenames_by_hash
+        ]
+
+        # Generate thumbnail AVIF container.
+        # Thumbnails are content-addressed (write_new), so no lock conflict.
+        # Full mode: regenerate for all photos.
+        # Incremental mode: generate only for new photos; existing thumbnail data is
+        # preserved per-photo inside lance_index.upsert_partition.
+        thumbnail_lookup: dict[str, tuple[str, int]] = {}
+        if generate_thumbnails:
+            if force_full_index:
+                await delete_partition_thumbnails(backend, partition)
+                if photo_entries:
+                    try:
+                        new_chunks = await generate_partition_thumbnails(
+                            backend, partition, photo_entries, tier="thumbnail"
+                        )
+                        result.thumbnails_rebuilt = True
+                        thumbnail_lookup = _chunks_to_lookup(new_chunks)
+                    except Exception as exc:
+                        _log.error(
+                            "Thumbnail generation failed — partition=%r: %s",
+                            partition,
+                            exc,
+                            exc_info=True,
+                        )
+                        result.errors += 1
+                        result.error_details.append(f"thumbnails: {exc}")
+            elif new_entries:
+                try:
+                    new_chunks = await generate_partition_thumbnails(
+                        backend, partition, new_entries, tier="thumbnail"
+                    )
+                    result.thumbnails_rebuilt = True
+                    thumbnail_lookup = _chunks_to_lookup(new_chunks)
+                except Exception as exc:
+                    _log.error(
+                        "Thumbnail generation failed — partition=%r: %s",
+                        partition,
+                        exc,
+                        exc_info=True,
+                    )
+                    result.errors += 1
+                    result.error_details.append(f"thumbnails: {exc}")
+
+        # Delete stale rows before the upsert, so a hash written back by the
+        # upsert (another copy, a swapped file) is not removed afterwards.
+        # upsert_partition reads existing thumbnails after the delete, so carry
+        # the deleted hashes' thumbnails over; freshly generated ones win.
+        if stale_hashes:
+            thumbnail_lookup = {
+                h: existing_thumbs[h] for h in stale_hashes if h in existing_thumbs
+            } | thumbnail_lookup
+            await lance_index.delete(partition, sorted(stale_hashes))
+
+        # Upsert all photo rows for this partition.
+        if len(photo_entries) > 0:
+            await lance_index.upsert_partition(partition, photo_entries, thumbnail_lookup or None)
+
+    result.duration_ms = round((time.monotonic() - _t0) * 1000)
+    return result
+
+
+async def index_library(
+    backend: Backend,
+    force_extract_exif: bool = False,
+    generate_thumbnails: bool = False,
+    force_full_index: bool = False,
+    on_progress: Callable[[int, int, str, int, int], Awaitable[None]] | None = None,
+    lance_index_path: Path | None = None,
+    excluded_tag_prefixes: Iterable[str] = DEFAULT_EXCLUDED_TAG_PREFIXES,
+) -> LibraryIndexResult:
+    """Index all photos in a library.
+
+    Walks all subdirectories under the backend root and indexes each folder
+    that directly contains photos into the LanceDB index. Stale partitions
+    (previously indexed, no longer on disk) are pruned from LanceDB and their
+    metadata directories deleted. The thin ``summary.json`` marker
+    (``{schema_version, last_indexed_at}``) is written once at the end of the
+    session, not per partition.
+
+    Args:
+        backend: Backend to read/write.
+        force_extract_exif: If True, re-extract EXIF and overwrite existing
+            XMP sidecars.  Passed through to ``index_partition``.
+        generate_thumbnails: If True, generate thumbnail AVIF containers for
+            each partition.  Passed through to ``index_partition``.
+        force_full_index: If True, re-process all photos in every partition
+            regardless of existing manifests.  Passed through to
+            ``index_partition``.
+
+    Returns:
+        LibraryIndexResult aggregating every per-partition IndexResult.
+
+    Raises:
+        ValueError: If the existing summary.json's schema version is newer
+            than this software's SCHEMA_VERSION (the software must be
+            upgraded before it can safely index this library).
+    """
+    library_result = LibraryIndexResult()
+    manifest_store = SummaryStore(backend)
+
+    # Schema-version handling:
+    #   > SCHEMA_VERSION           → refuse (software too old for this index).
+    #   in [LOWEST, SCHEMA_VERSION] → use in place; additive migrations cover the gap.
+    #   < LOWEST_SCHEMA_VERSION     → too old to migrate in place; force a full reindex
+    #                                 so all manifests and thumbnails are regenerated.
+    try:
+        existing_summary, _ = await manifest_store.read_summary()
+        if existing_summary.schema_version > SCHEMA_VERSION:
+            raise ValueError(
+                f"Library index schema version {existing_summary.schema_version} is newer "
+                f"than this software supports ({SCHEMA_VERSION}). Upgrade Whitebeard before "
+                f"indexing this library."
+            )
+        if existing_summary.schema_version < LOWEST_SCHEMA_VERSION:
+            _log.info(
+                "index_library — schema version %d < lowest supported %d, forcing full reindex",
+                existing_summary.schema_version,
+                LOWEST_SCHEMA_VERSION,
+            )
+            force_full_index = True
+    except FileNotFoundError:
+        pass  # No existing index — first run, nothing to upgrade.
+    except ValueError:
+        raise
+    except Exception as exc:
+        _log.warning("index_library — could not read summary.json for version check: %s", exc)
+
+    # Walk the directory tree from the backend root via BFS, collecting all
+    # partitions.  Hidden directories (names starting with ".") are skipped —
+    # they are system or metadata folders, not user partitions.
+    partitions: list[str] = []
+    queue: list[str] = [""]
+    while queue:
+        current = queue.pop()
+        partitions.append(current)
+        for subdir in await backend.list_dirs(current):
+            if not PurePath(subdir).name.startswith("."):
+                queue.append(subdir)
+
+    # Create the LanceDB index once before spawning concurrent tasks.  Each
+    # concurrent call to index_partition would otherwise call create_table()
+    # independently; on Lance 4.x that races an Overwrite transaction against
+    # in-flight Update (merge_insert) transactions and raises an MVCC conflict.
+    lance_index = await LanceIndex.open(
+        backend,
+        PHOTO_TABLE_NAME,
+        create_if_missing=True,
+        index_path=lance_index_path,
+    )
+
+    # Index partitions in parallel, capped at _MAX_CONCURRENT_PARTITIONS workers.
+    # Thumbnail generation is already multi-threaded internally, so a low cap
+    # avoids over-saturating I/O while still hiding per-partition latency.
+    total_partitions = len(partitions)
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PARTITIONS)
+    completed = 0
+
+    async def _index_one(partition: str) -> IndexResult:
+        nonlocal completed
+        async with semaphore:
+            result = await index_partition(
+                backend,
+                partition,
+                force_extract_exif,
+                generate_thumbnails=generate_thumbnails,
+                force_full_index=force_full_index,
+                lance_index=lance_index,
+                excluded_tag_prefixes=excluded_tag_prefixes,
+            )
+        completed += 1
+        if on_progress is not None:
+            await on_progress(
+                completed,
+                total_partitions,
+                partition,
+                result.duration_ms,
+                result.photos_processed + result.photos_skipped,
+            )
+        return result
+
+    _t0 = time.monotonic()
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(_index_one(p)) for p in partitions]
+    partition_index_res = tuple(t.result() for t in tasks)
+    # Prune empty partitions
+    library_result.partitions = list(
+        p
+        for p in partition_index_res
+        if (p.photos_processed > 0 or p.photos_skipped > 0 or p.photos_deleted > 0 or p.errors > 0)
+    )
+
+    # Remove stale partitions (previously indexed, no longer on disk).
+    indexed_paths = {r.partition for r in partition_index_res}
+    library_result.partitions_deleted = await _prune_deleted_partitions(
+        backend, lance_index, indexed_paths
+    )
+
+    await lance_index.maintain()
+
+    # Write the thin root summary once per full indexing session (not per
+    # partition) — this is also the point where an old bulky summary.json
+    # (pre-dating this redesign) gets naturally replaced.
+    await manifest_store.write_full_summary(
+        RootSummary(schema_version=SCHEMA_VERSION, last_indexed_at=datetime.now(UTC))
+    )
+
+    library_result.total_duration_ms = round((time.monotonic() - _t0) * 1000)
+    return library_result
+
+
+async def index_partition_scope(
+    backend: Backend,
+    partition_scope: list[str],
+    force_extract_exif: bool = False,
+    generate_thumbnails: bool = False,
+    force_full_index: bool = False,
+    on_progress: Callable[[int, int, str, int, int], Awaitable[None]] | None = None,
+    lance_index_path: Path | None = None,
+    excluded_tag_prefixes: Iterable[str] = DEFAULT_EXCLUDED_TAG_PREFIXES,
+) -> LibraryIndexResult:
+    """Index an explicit list of partitions (leaf folders, direct children only).
+
+    Unlike ``index_library``, does not walk the directory tree and does not
+    prune stale partitions — only the given ``partition_scope`` entries are
+    touched, so partitions outside the scope are left untouched in LanceDB.
+
+    Args:
+        backend: Backend to read/write.
+        partition_scope: Folder paths to index. Each is indexed independently
+            via ``index_partition`` (direct children only, no descendants).
+        force_extract_exif: If True, re-extract EXIF and overwrite existing
+            XMP sidecars.  Passed through to ``index_partition``.
+        generate_thumbnails: If True, generate thumbnail AVIF containers for
+            each partition.  Passed through to ``index_partition``.
+        force_full_index: If True, re-process all photos in every partition
+            regardless of existing manifests.  Passed through to
+            ``index_partition``.
+
+    Requires an existing, current-schema ``summary.json`` (i.e. a prior full
+    ``index_library`` run) — a scoped run only touches a handful of leaf
+    folders, so it cannot claim to upgrade or validate the whole library's
+    schema version. It never writes ``summary.json``; it only checks the
+    existing marker and refuses to run on any mismatch.
+
+    Returns:
+        LibraryIndexResult aggregating every per-partition IndexResult.
+
+    Raises:
+        ValueError: If ``summary.json`` is missing, or its schema version
+            does not match this software's ``SCHEMA_VERSION`` (older — run a
+            full index; newer — upgrade the software), or if an entry of
+            ``partition_scope`` is not an existing folder of the library.
+    """
+    library_result = LibraryIndexResult()
+    manifest_store = SummaryStore(backend)
+
+    try:
+        existing_summary, _ = await manifest_store.read_summary()
+    except FileNotFoundError as err:
+        raise ValueError(
+            "Library index not found. Run a full index before indexing a partition scope."
+        ) from err
+
+    # A scoped run only touches a few leaf folders, so it cannot rebuild the
+    # library: it accepts only the compatible window and refuses anything else.
+    if existing_summary.schema_version > SCHEMA_VERSION:
+        raise ValueError(
+            f"Library index schema version {existing_summary.schema_version} is newer "
+            f"than this software supports ({SCHEMA_VERSION}). Upgrade Whitebeard before "
+            f"indexing a partition scope."
+        )
+    if existing_summary.schema_version < LOWEST_SCHEMA_VERSION:
+        raise ValueError(
+            f"Library index schema version {existing_summary.schema_version} is older "
+            f"than the lowest supported version ({LOWEST_SCHEMA_VERSION}). Run a full "
+            f"index to upgrade before indexing a partition scope."
+        )
+
+    # A mistyped folder would list no files and silently index nothing, so
+    # refuse the whole run before touching any partition.
+    missing = [p for p in partition_scope if not await backend.dir_exists(p)]
+    if missing:
+        raise ValueError(
+            "Partition scope folder(s) not found in the library: "
+            + ", ".join(repr(p) for p in missing)
+            + ". Paths are relative to the library root, e.g. '2024/2024-07'. "
+            "To remove deleted folders from the index, run a full index."
+        )
+
+    lance_index = await LanceIndex.open(
+        backend,
+        PHOTO_TABLE_NAME,
+        create_if_missing=True,
+        index_path=lance_index_path,
+    )
+
+    total_partitions = len(partition_scope)
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PARTITIONS)
+    completed = 0
+
+    async def _index_one(partition: str) -> IndexResult:
+        nonlocal completed
+        async with semaphore:
+            result = await index_partition(
+                backend,
+                partition,
+                force_extract_exif,
+                generate_thumbnails=generate_thumbnails,
+                force_full_index=force_full_index,
+                lance_index=lance_index,
+                excluded_tag_prefixes=excluded_tag_prefixes,
+            )
+        completed += 1
+        if on_progress is not None:
+            await on_progress(
+                completed,
+                total_partitions,
+                partition,
+                result.duration_ms,
+                result.photos_processed + result.photos_skipped,
+            )
+        return result
+
+    _t0 = time.monotonic()
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(_index_one(p)) for p in partition_scope]
+    library_result.partitions = [t.result() for t in tasks]
+
+    await lance_index.maintain()
+
+    library_result.total_duration_ms = round((time.monotonic() - _t0) * 1000)
+    return library_result
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — single-file processing
+# ---------------------------------------------------------------------------
+
+
+async def _extract_one(
+    xmp_store: XmpStore,
+    photo_path: str,
+    force_extract_exif: bool,
+) -> tuple[PhotoEntry, bool]:
+    """Process a single photo.
+
+    Returns:
+        (PhotoEntry, created) where created=True if a new sidecar was written.
+    """
+    sidecar, version, created = await xmp_store.read_or_create_from_picture(
+        photo_path, force=force_extract_exif
+    )
+    filename = PurePath(photo_path).name
+    entry = PhotoEntry.from_sidecar(
+        filename, sidecar, sidecar.content_hash or "", str(version.value)
+    )
+    return entry, created
+
+
+def _chunks_to_lookup(chunks: list[ThumbnailChunk]) -> dict[str, tuple[str, int]]:
+    """Convert ThumbnailChunk list to content_hash → (avif_hash, tile_index) map."""
+    lookup: dict[str, tuple[str, int]] = {}
+    for chunk in chunks:
+        for i, content_hash in enumerate(chunk.grid.photo_order):
+            lookup[content_hash] = (chunk.avif_hash, i)
+    return lookup
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — deleted partition cleanup
+# ---------------------------------------------------------------------------
+
+
+async def _prune_deleted_partitions(
+    backend: Backend,
+    lance_index: LanceIndex,
+    indexed_paths: set[str],
+) -> int:
+    """Remove stale partitions (previously indexed, no longer on disk) from LanceDB.
+
+    Compares the set of partitions currently present in the LanceDB index
+    against the set discovered on this indexing pass, and removes any that
+    are no longer there.
+
+    Returns:
+        Number of partitions removed.
+    """
+    existing_paths = await lance_index.list_partitions()
+    stale = sorted(p for p in existing_paths if p not in indexed_paths and p != "")
+    if not stale:
+        return 0
+
+    _log.info(
+        "index_library — removing %d stale partition(s): %s",
+        len(stale),
+        ", ".join(stale),
+    )
+
+    for path in stale:
+        await _delete_partition_metadata(backend, path)
+        await lance_index.delete_partition(path)
+
+    return len(stale)
+
+
+async def _delete_partition_metadata(backend: Backend, partition: str) -> None:
+    """Delete the .ouestcharlie/<partition>/ metadata directory recursively.
+
+    Safety guard: refuses to delete outside the metadata tree.
+    """
+    suffix = partition.rstrip("/") + "/" if partition else ""
+    metadata_dir = f"{METADATA_DIR}/{suffix}"
+    # Safety guard: never delete outside the metadata tree.
+    if not metadata_dir.startswith(METADATA_DIR + "/"):
+        raise ValueError(f"Refusing to delete outside metadata dir: {metadata_dir!r}")
+    try:
+        await backend.delete_dir(metadata_dir)
+        _log.info("Deleted stale metadata directory: %s", metadata_dir)
+    except FileNotFoundError:
+        pass  # Already gone — nothing to do.
+    except Exception as exc:
+        _log.warning("Could not delete stale metadata directory %r: %s", metadata_dir, exc)

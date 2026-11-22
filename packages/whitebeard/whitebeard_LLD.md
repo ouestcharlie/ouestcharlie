@@ -1,0 +1,129 @@
+# Whitebeard Low-Level Design
+
+## Role
+
+Whitebeard is the **indexing agent** for OuEstCharlie. It operates in index mode: scan an existing local photo library in place (no files moved), create XMP sidecars containing EXIF metadata and the `ouestcharlie:contentHash`, upsert per-photo rows into the LanceDB columnar index, and update the backend-wide `summary.json`. It never reads or writes the gallery UI — that is Woof's responsibility.
+
+## Module Structure
+
+```
+src/whitebeard/
+  indexer.py   — pure async logic, no MCP dependency; independently testable
+  agent.py     — WhitebeardAgent(AgentBase), registers MCP tools
+  __main__.py  — entry point; sets up logging then runs the MCP server
+```
+
+`indexer.py` contains all business logic. `agent.py` is a thin wrapper that translates MCP tool calls into `indexer.py` function calls and formats the result dict.
+
+## MCP Tools
+
+### `index_partition(partition, force_extract_exif=False, generate_thumbnails=True, force_full_index=False)`
+
+Indexes all photos directly in one folder (direct children only — subdirectories are separate partitions).
+
+**Steps:**
+1. Fetch existing LanceDB rows for the partition (`filename`, `content_hash`, `xmp_version_token`) — used both to build the incremental skip map and to detect deletions.
+2. List photo files and `.xmp` sidecars on disk in one `backend.list_files` call. A photo's current sidecar token is the token of the first existing candidate in the reader's order (`sidecar_candidates`: `NAME.EXT.xmp`, then `NAME.xmp`), or none.
+3. Detect photos in the index but no longer on disk — log and schedule for deletion. Runs unconditionally, in both incremental and full-reindex mode.
+4. For each photo: if `force_full_index=False`, indexed once **and** its current sidecar token equals the indexed `xmp_version_token`, skip (incremental). Otherwise read or create XMP sidecar. If `force_extract_exif=True`, re-extract and overwrite.
+5. If `generate_thumbnails=True` and there are new photos, generate AVIF chunks for newly-processed photos only (or all when `force_full_index=True`).
+6. Delete stale rows from the index; write all current entries in LanceIndex (preserving existing thumbnail data for unchanged photos).
+7. Compute `ManifestSummary` using a DuckDB aggregate query over the LanceDB index.
+8. Write the summary to the backend-wide `summary.json`.
+
+**Returns:** `IndexResult` (photos processed, skipped, deleted, sidecars created/skipped/changed, errors, duration).
+
+### `index_library(force_extract_exif=False, generate_thumbnails=True, force_full_index=False)`
+
+Indexes the entire library under the backend root.
+
+**Steps:**
+1. BFS-walk the full directory tree from `""`. Hidden directories (name starts with `.`) are skipped — they are metadata or system folders.
+2. Dispatch collected partitions to `index_partition` in parallel, capped at `_MAX_CONCURRENT_PARTITIONS = 4` concurrent workers (via `asyncio.Semaphore`). The cap is kept low because thumbnail generation is already multi-threaded; going wider would over-saturate I/O.
+3. Progress is reported after each partition completes (not while it is running).
+4. After all partitions are indexed, compare the discovered partition set against `summary.json`. Remove stale entries from `summary.json` and delete their rows from the LanceDB index via `LanceIndex.delete_partition`, then delete their per-partition `.ouestcharlie/<partition>/` directories (thumbnails) via `backend.delete_dir()`.
+5. Call `await lance_index.maintain()` to compact LanceDB fragment files and prune version history older than 1 hour (`table.optimize(cleanup_older_than=timedelta(hours=1))`). This keeps the index lean so consecutive runs reclaim space from each other.
+
+**Returns:** `LibraryIndexResult` aggregating all per-partition `IndexResult` values plus `partitions_deleted`.
+
+## Incremental Indexing
+
+Whitebeard defaults to incremental mode — photos already present in the LanceDB index whose sidecar is unchanged are skipped without re-reading their XMP sidecars or re-extracting EXIF. Only new photos (filenames not in the index) and photos whose sidecar changed are processed.
+
+- **Sidecar changes**: a sidecar rewritten by another tool (darktable, digiKam, Lightroom, a text editor), deleted (re-created from the media file), or superseded by the other naming form (darktable adding `NAME.EXT.xmp` next to an older `NAME.xmp`) has a token different from the indexed one, so the photo is re-read. The token comes from the directory listing, so detecting it costs no sidecar read. A sidecar-only edit keeps the content hash, so the row is updated in place and keeps its thumbnail. These photos are counted in `sidecars_changed` (and in `photos_processed`) and logged at INFO.
+- **Token comparison limit**: the token is the sidecar's mtime, compared for equality, not order. An edit synced from another device is detected even with clock skew or a coarser mtime precision on the cloud side; a sync client re-stamping files only causes one extra re-read. A sidecar whose mtime is set back to exactly the indexed value (`touch -d`, or `cp -p` / `rsync -a` restoring the indexed version) is not detected; use `force_full_index=True`. Sidecars are deliberately not hashed: that would read every sidecar at every run.
+
+- **Deleted photos**: photos in the LanceDB index but not on disk are deleted and logged at INFO level. This applies in both incremental and full-reindex (`force_full_index=True`) mode — deletion detection is not conditional on the incremental/full distinction, which only affects whether already-indexed photos get re-processed.
+- **Deleted partitions**: partitions in `summary.json` but no longer on disk are removed from the summary, their LanceDB rows deleted, and their `.ouestcharlie/<partition>/` directories deleted after the gather step in `index_library`.
+- **Media file changes**: changes to the media file itself (EXIF fields, a crop or re-export) while its sidecar is unchanged are NOT detected in incremental mode, and `force_full_index=True` alone keeps the content hash stored in the sidecar. Use `force_extract_exif=True` together with `force_full_index=True` to refresh all metadata.
+- **Thumbnail strategy**: new AVIF chunks are generated only for newly-processed photos. `LanceIndex.upsert_partition` preserves existing thumbnail data for photos not included in the new thumbnail generation pass. `force_full_index=True` re-generates all thumbnail chunks for the partition.
+
+## Concurrency Model
+
+```
+index_library
+  │
+  ├── asyncio.gather (all partitions)
+  │     │
+  │     ├── Semaphore(4) → index_partition("2024/Jan/")
+  │     ├── Semaphore(4) → index_partition("2024/Feb/")
+  │     ├── Semaphore(4) → index_partition("2024/Mar/")  ← up to 4 at once
+  │     ├── Semaphore(4) → index_partition("2024/Apr/")
+  │     │     (queued)
+  │     └── ...
+  │
+  └── _prune_deleted_partitions (sequential, after gather)
+```
+
+Each `index_partition` call is independent: it upserts its rows into the shared LanceDB table (which handles concurrent writes natively) and then calls `upsert_partition_in_summary` to update `summary.json`. The latter uses optimistic concurrency (read-modify-write with up to 5 retries on version conflict) — the only observable effect of parallelism is more frequent retries under high partition counts.
+
+`LibraryIndexResult.partitions` preserves the BFS discovery order (same order as the input `partitions` list), because `asyncio.gather` returns results in submission order.
+
+## LanceDB Write
+
+**Design rule.** A row's identity is `(partition, content_hash)`. A partition holds exactly one row per `content_hash` and one per `filename`. Identical copies of a file within a partition share one row, one thumbnail and one preview; the row's `filename` names one representative copy, which stays stable across runs.
+
+**Stale and duplicate rows.** `index_partition` reads every existing row of the partition (`filename`, `content_hash`, thumbnail reference), keeping all hashes per filename and all filenames per hash. It then builds the set of stale hashes:
+
+- every hash of a file gone from disk;
+- every hash held by more than one row (a duplicate merge key, e.g. left by an index predating OEC-11b);
+- every former hash of a re-processed file whose hash changed. A filename with several rows is re-processed even in incremental mode, to learn its current hash.
+
+A stale hash still held by a file skipped in incremental mode (another copy of a deleted file, a duplicate-key row) is written back: that file is re-processed too (cheap, the sidecar is reused). Each file is processed at most once per run. If the only on-disk file holding a stale hash fails extraction, that hash's rows are kept rather than deleted, so a transient read error never drops a photo; a later run completes the repair. `index_partition` picks one representative per hash before the upsert: a filename already indexed under the hash and still holding it keeps the row, otherwise the lexicographically smallest processed copy is chosen; the other copies are dropped (DEBUG log). Stale rows are deleted **before** the upsert, so a hash written back by the upsert (a remaining copy, two files that swapped content) survives. Thumbnail references of the deleted hashes are carried into `thumbnail_lookup`, so re-inserted rows keep their thumbnail. In incremental mode, thumbnails are generated for new filenames and for re-processed files whose hash was never indexed, since those have no thumbnail to carry over. Every run therefore repairs an existing index; no migration is needed.
+
+**Upsert.** `LanceIndex.upsert_partition` receives the final `list[PhotoEntry]` and a `thumbnail_lookup` for newly-generated chunks. It pre-queries existing thumbnail data so that photos absent from the lookup retain their existing AVIF reference — preventing incremental runs from wiping thumbnails. Rows are merged on `(partition, content_hash)` (update if matched, insert if not). This allows the same content hash to exist in multiple partitions as independent rows, preventing cross-partition collision where indexing one folder would overwrite another folder's row for a duplicate file. Within each partition batch, entries with a duplicate `content_hash` are deduplicated before the merge. Since the caller already picked one representative per hash, this is a safety net for a caller bug: a warning is logged and the lexicographically smallest filename is kept, so the result does not depend on listing order.
+
+## XMP Sidecar Handling
+
+Delegated entirely to `XmpStore.read_or_create_from_picture` from `ouestcharlie_toolkit`. Whitebeard never reads XMP files directly — it receives a `(XmpSidecar, VersionToken, created)` tuple and converts it to a `PhotoEntry` via `PhotoEntry.from_sidecar`.
+
+## Deleted Partition Cleanup (`_prune_deleted_partitions`)
+
+Called by `index_library` after the gather step. Compares the BFS-discovered partition set against the existing `summary.json`:
+
+1. Reads `summary.json` (returns 0 immediately if not found).
+2. Identifies stale partitions (in lance index but not discovered by BFS).
+3. For each stale partition, calls `_delete_partition_metadata` which delegates to `backend.delete_dir()`.
+4. Writes the `summary.json` via `write_summary`.
+
+`backend.delete_dir()` uses `shutil.rmtree` with an `onexc` callback (Python 3.12+): locked or open files are logged at WARNING and skipped rather than aborting the whole tree. Summary pruning happens regardless of deletion success — a partial cleanup is acceptable; the next library run will retry remaining files.
+
+A safety guard in `_delete_partition_metadata` verifies the computed metadata path starts with `.ouestcharlie/` before deletion.
+
+## Error Reporting
+
+Per-photo errors are caught and recorded in `IndexResult.error_details`; they never abort the partition. Thumbnail and manifest errors are similarly caught and recorded. `index_library` has no additional isolation — a raised exception from `index_partition` would propagate through `asyncio.gather` and fail the whole library run (which is intentional: manifest corruption should surface loudly).
+
+`LibraryIndexResult.top_error_details` is a generator property that yields at most `_TOP_ERRORS` (10) messages, drawn in order from the flattened `error_details` of all partitions.
+
+## Logging
+
+`setup_logging("whitebeard", log_file_env_var="WHITEBEARD_LOG_FILE")` is called in `__main__.py` before any agent code is imported. All logs go to `~/Library/Logs/ouestcharlie/whitebeard.log` on macOS (shared `ouestcharlie/` folder, one log file per agent). Override with the `WHITEBEARD_LOG_FILE` environment variable.
+
+Per MCP convention: exceptions in tool handlers are always logged with `exc_info=True` before re-raising, because FastMCP swallows unhandled errors silently on the stdio transport.
+
+## References
+
+- [HLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md) — system architecture, agent role
+- [py_toolkit_LLD.md](https://github.com/ouestcharlie/ouestcharlie-py-toolkit/blob/master/py_toolkit_LLD.md) — `XmpStore`, `ManifestStore`, `Backend`, thumbnail builder
+- [agent_LLD_rationale.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/agent_LLD_rationale.md) — agent design decisions
