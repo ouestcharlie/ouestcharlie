@@ -22,7 +22,7 @@ jobs:
       matrix:
         package: [py-toolkit, whitebeard, wally]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
