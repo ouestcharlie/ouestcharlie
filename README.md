@@ -21,12 +21,18 @@ A OuEstCharlie is a gallery for **media files — photos and videos** within you
 
 | Repository | Purpose |
 |------------|---------|
-| [**ouestcharlie** *(this repo)*](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs — HLR/HLD/rationale, MCP interface, project charter |
+| [**ouestcharlie** *(this repo)*](https://github.com/ouestcharlie/ouestcharlie/) | Architecture docs (HLR/HLD/rationale, project charter) and the Python agents, as one uv workspace (see below) |
 | [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller — MCP server, gallery UI, agent orchestration |
-| [ouestcharlie-whitebeard](https://github.com/ouestcharlie/ouestcharlie-whitebeard/) | Indexing agent (index mode) |
-| [ouestcharlie-wally](https://github.com/ouestcharlie/ouestcharlie-wally/) | Search / consumption agent |
-| [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit/) | Python toolkit for building agents (AgentBase, stores, data models) |
 | [ouestcharlie-imageproc](https://github.com/ouestcharlie/ouestcharlie-imageproc/) | Rust `image-proc` coprocessor — decode, resize, AVIF/JPEG encode |
+
+The Python agents live in this repo, under [packages/](packages/). Each is a separate PyPI
+package with its own wheel; all three share one version:
+
+| Package | PyPI | Purpose |
+|---------|------|---------|
+| [packages/whitebeard](packages/whitebeard/) | `ouestcharlie-whitebeard` | Indexing agent (index mode) |
+| [packages/wally](packages/wally/) | `ouestcharlie-wally` | Search / consumption agent |
+| [packages/py-toolkit](packages/py-toolkit/) | `ouestcharlie-py-toolkit` | Python toolkit for building agents (AgentBase, stores, data models) |
 
 ## Architecture
 
@@ -51,8 +57,8 @@ Agents communicate with Woof via MCP (stdio or HTTP transport).
 - [design/agent_LLD_rationale.md](design/agent_LLD_rationale.md) — Technology selection (Python + Rust)
 - MCP tool schemas — defined in each agent's tool registrations, discoverable at runtime via `tools/list`
 
-**Python toolkit** (in [ouestcharlie-py-toolkit](https://github.com/ouestcharlie/ouestcharlie-py-toolkit)):
-- [README.md](https://github.com/ouestcharlie/ouestcharlie-py-toolkit/blob/master/README.md) — Toolkit usage guide
+**Python toolkit** (in [packages/py-toolkit](packages/py-toolkit/)):
+- [README.md](packages/py-toolkit/README.md) — Toolkit usage guide
 
 ### Data Model
 
@@ -74,7 +80,9 @@ See High-Level Design
 |-----------|-------------|--------|-----------|
 | **Woof** | [woof_LLR.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLR.md) | [woof_LLD.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLD.md) | [woof_LLD_rationale.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLD_rationale.md) |
 | **Agents general** | — | - | [agent_LLD_rationale.md](design/agent_LLD_rationale.md) |
-| **Agent toolkit** | | [py_toolkit_LLD.md](https://github.com/ouestcharlie/ouestcharlie-py-toolkit/blob/master/py_toolkit_LLD.md) |
+| **Agent toolkit** | — | [py_toolkit_LLD.md](design/py_toolkit_LLD.md) | [py_toolkit_LLD_rationale.md](design/py_toolkit_LLD_rationale.md) |
+| **Whitebeard** | — | [whitebeard_LLD.md](design/whitebeard_LLD.md) | — |
+| **Wally** | — | [wally_LLD.md](design/wally_LLD.md) | — |
 
 ## Technology Stack
 
@@ -109,16 +117,30 @@ See the [Status section in Woof](https://github.com/ouestcharlie/ouestcharlie-wo
 
 Bug reports and feature suggestions are welcome in the [Github issues](https://github.com/ouestcharlie/ouestcharlie/issues).
 
-Design and implementation plans are stored as Markdown in the [project/issues folder](https://github.com/ouestcharlie/ouestcharlie/tree/master/project/issues).
+Design and implementation plans are stored as Markdown in the [project/issues folder](project/issues/).
 
 ### Contributing
 
 Contributions are welcome. Please:
 
 - **Open an issue first** for anything beyond a small fix — bug reports, feature requests, or design questions — so the change can be discussed against the [HLD](design/HLD.md)/[HLR](design/HLR.md) before work starts.
-- **Submit pull requests to the relevant repository** from the table above (architecture/docs changes go here, in `ouestcharlie`; component changes go to `ouestcharlie-woof`, `ouestcharlie-whitebeard`, `ouestcharlie-wally`, `ouestcharlie-py-toolkit`, or `ouestcharlie-imageproc`).
+- **Submit pull requests to the relevant repository** from the table above: architecture/docs and agent/toolkit changes go here, in `ouestcharlie`; Woof changes go to `ouestcharlie-woof`, image processing to `ouestcharlie-imageproc`.
 - **Align with the documentation hierarchy** — requirements → design → implementation. If a change affects architecture or data models, update the corresponding HLD/LLD in the same PR.
 - **Keep PRs focused and atomic**, with a clear description of the rationale.
+
+### Development setup (agents)
+
+The three packages form one [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/): one `uv.lock` and one `.venv` at the repo root.
+
+```bash
+uv sync --all-packages              # all three packages, editable, plus dev tools
+uv run pre-commit install           # ruff + mypy on commit
+make test REPOS=100                  # pytest, one package at a time
+```
+
+Run pytest from a package folder (`cd packages/wally && ../../.venv/bin/pytest`), not from the root: the three `tests/` packages share a name and can't be collected in one session.
+
+Releases: `make bump REPOS=100 VERSION=X.Y.Z` sets the shared version, then a `vX.Y.Z` tag publishes the three packages to PyPI.
 
 ## License
 

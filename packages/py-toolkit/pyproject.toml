@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ouestcharlie-py-toolkit"
+version = "0.17.0"
+description = "Shared Python toolkit for OuEstCharlie agents"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE*"]
+authors = [
+    { name = "Antoine Hue" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "duckdb>=1.3",
+    "mcp>=2.0,<3.0.0",
+    "pyexiv2>=2.8",
+    "blake3>=1.0.8",
+    "pyjwt>=2.12.0", # suggested by dependabot
+    "ouestcharlie-imageproc~=3.0",
+    "lancedb>=0.33",
+    "pyarrow>=18",
+    "pillow-heif>=0.18",
+    "Pillow>=11",
+    "av>=13", # PyAV: video metadata + cover-frame extraction (bundles ffmpeg libs)
+    "tzfpy>=0.15", # offline GPS->timezone lookup for video local-time resolution (Rust, no deps)
+]
+
+[project.urls]
+Homepage = "https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/py-toolkit"
+Issues = "https://github.com/ouestcharlie/ouestcharlie/issues"
+
+#[tool.uv.sources]
+#ouestcharlie-imageproc = { path = "../../../ouestcharlie-imageproc", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ouestcharlie_toolkit"]
+
+[tool.ruff]
+# Shared settings live in the workspace root.
+extend = "../../pyproject.toml"
+# First-party imports for sorting: this package (src/) and its tests (.), as in a single repo.
+src = [".", "src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+tmp_path_retention_policy = "none"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "pyexiv2.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pillow_heif.*"
+ignore_missing_imports = true
+
+# pyarrow ships no type information (no py.typed, no bundled stubs).
+[[tool.mypy.overrides]]
+module = "pyarrow.*"
+ignore_missing_imports = true

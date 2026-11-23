@@ -287,3 +287,28 @@ Three approaches were considered for agent → Woof communication:
 - [MCP Specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25)
 - [MCP TypeScript Schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-11-25/schema.ts)
 - [MCP GitHub Repository](https://github.com/modelcontextprotocol/modelcontextprotocol)
+
+## Code Organization: One Repo, One Workspace, Independent Packages
+
+### Problem
+
+The toolkit, Whitebeard and Wally were first developed in three separate repositories. In practice they behaved as one unit: they were released together at the same version, most changes touched more than one of them, and the agents' development environments pointed at a sibling toolkit checkout. Each change needed a branch, a PR and a CI run per repository, and each CI checked out the toolkit repository a second time to build against it.
+
+### Options considered
+
+| Option | Pros | Cons |
+|---|---|---|
+| Separate repositories (previous setup) | Independent history and CI per package | A cross-package change is split over several PRs; three lock files can drift; CI needs extra checkouts; tooling scripts run git commands across repos |
+| One repository, one merged package | Simplest build | Woof and other users would install code they don't need (e.g. the indexer with the search agent); package boundaries are no longer enforced |
+| **One repository, one uv workspace, independent packages** | A cross-package change is one PR; one lock file, so every package is tested against the same dependency versions; each package still has its own dependencies and wheel | All packages share one development `.venv`, which hides a missing dependency declaration locally; tests can't be collected in one pytest session |
+
+**Decision**: one repository and one uv workspace, with independent packages.
+
+- **Lockstep releases**: the packages already shared a version and were bumped together. One tag now releases all three.
+- **Package boundaries stay real**: each package keeps its own declared dependencies. CI installs each package alone, as a built wheel with only its own dependencies, so an undeclared import fails in CI even though the shared development `.venv` has everything.
+- **Design docs next to the code**: the agents' LLDs and the HLD are in the same repository, so a design change and its implementation go in one PR.
+
+### Why Woof and imageproc stay separate
+
+- **Woof** has its own build and release chain (a JavaScript gallery build, an MCPB bundle, a Claude plugin) and a narrower Python requirement. A workspace has a single Python range for all members, so adding Woof would narrow it for the agents too. Woof also uses the agents the way end users do, from PyPI.
+- **imageproc** is a native Rust build with platform wheels and its own version line, driven by its wire protocol rather than by agent features.

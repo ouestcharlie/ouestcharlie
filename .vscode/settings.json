@@ -7,4 +7,21 @@
         "latex",
         "plaintext"
     ],
+
+    // Python: one workspace .venv at the root (uv sync --all-packages)
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.typeCheckingMode": "standard",
+    "python.analysis.autoImportCompletions": true,
+    // pytest can't collect the three packages in one session (their tests/
+    // packages share a name): open a packages/<name> folder to run tests from the
+    // editor, or use `make test`.
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": false
 }

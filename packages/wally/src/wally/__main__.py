@@ -1,0 +1,118 @@
+"""Entry point for the Wally MCP agent (Streamable HTTP transport).
+
+Wally runs as a single HTTP server launched by Woof as a subprocess.
+One port serves both MCP (at /mcp) and preview JPEGs (at /previews/…).
+On startup it binds an OS-assigned loopback port and prints:
+
+    WALLY_READY port=<port>
+
+to stdout, then serves until terminated (SIGTERM from Woof on shutdown).
+
+Logs are written to the platform log directory by default.
+Override with WALLY_LOG_FILE=/path/to/file.log.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import socket
+import sys
+
+from ouestcharlie_toolkit import setup_logging
+
+# Set up logging before importing agent code (which may trigger library imports).
+_log_file = setup_logging("wally", log_file_env_var="WALLY_LOG_FILE", level=logging.INFO)
+_log = logging.getLogger(__name__)
+_log.info("Wally starting — log: %s", _log_file)
+
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp
+
+from wally.agent import WallyAgent
+from wally.http_server import MediaMiddleware
+
+
+class _BearerGuard(BaseHTTPMiddleware):
+    """Reject MCP HTTP requests that lack a valid Bearer token."""
+
+    def __init__(self, app: ASGIApp, *, token: str) -> None:
+        super().__init__(app)
+        self._expected = f"Bearer {token}"
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if request.headers.get("authorization") != self._expected:
+            return Response("Unauthorized", status_code=401)
+        return await call_next(request)
+
+
+def _bind_free_port() -> tuple[socket.socket, int]:
+    """Bind an OS-assigned loopback TCP port; caller passes the socket to uvicorn."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    return sock, sock.getsockname()[1]
+
+
+async def _serve(app: ASGIApp, sock: socket.socket, port: int, media: MediaMiddleware) -> None:
+    import uvicorn
+
+    config = uvicorn.Config(
+        app,
+        log_level="info",
+        access_log=True,
+    )
+    server = uvicorn.Server(config)
+
+    async def _signal_ready() -> None:
+        # Wait until uvicorn has finished binding and is accepting connections
+        # before signalling Woof.  Emitting WALLY_READY too early (before
+        # server.serve() runs startup) causes connection failures on Windows
+        # where import/startup overhead is larger than on macOS/Linux.
+        # Also check should_exit: if uvicorn's lifespan startup fails it sets
+        # should_exit=True and returns from serve() without setting started=True,
+        # which would otherwise leave this loop spinning until Woof kills the process.
+        while not server.started:
+            if server.should_exit:
+                return
+            await asyncio.sleep(0.05)
+        sys.stdout.write(f"WALLY_READY port={port}\n")
+        sys.stdout.flush()
+        _log.info("Wally ready — port %d", port)
+
+    try:
+        await asyncio.gather(server.serve(sockets=[sock]), _signal_ready())
+    finally:
+        await media.close()
+        _log.info("image-proc shut down")
+
+
+def main() -> None:
+    agent_token = os.environ.get("WOOF_AGENT_TOKEN", "")
+
+    agent = WallyAgent()
+    backend_name = agent.backend_config.get("name", "")
+
+    # Layer the ASGI stack (innermost first):
+    #   MCP app (Starlette, handles /mcp)
+    #   → MediaMiddleware (intercepts /previews/… and /thumbnails/…)
+    #   → _BearerGuard (enforces auth on all routes, including media)
+    mcp_app = agent.mcp.streamable_http_app()
+    media: MediaMiddleware = MediaMiddleware(
+        mcp_app,
+        backend_config=agent.backend_config,
+        backend_name=backend_name,
+    )
+    app: ASGIApp = media
+    if agent_token:
+        app = _BearerGuard(app, token=agent_token)
+
+    sock, port = _bind_free_port()
+    asyncio.run(_serve(app, sock, port, media))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,381 @@
+"""Tests for _build_where_clause — SQL WHERE generation from SearchPredicate."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from ouestcharlie_toolkit.model import PHOTO_FIELDS
+
+from wally.searcher import (
+    CollectionFilter,
+    FilterGroup,
+    FilterLeaf,
+    GpsBoxFilter,
+    RangeFilter,
+    SearchPredicate,
+    StringFilter,
+    _build_group,
+    _build_where_clause,
+)
+
+
+def _clause(filters: dict) -> str | None:
+    children = [FilterLeaf(field=k, value=v) for k, v in filters.items()]
+    return _build_where_clause(SearchPredicate(root=FilterGroup(children=children)), PHOTO_FIELDS)
+
+
+# ---------------------------------------------------------------------------
+# Empty predicate
+# ---------------------------------------------------------------------------
+
+
+def test_empty_predicate_returns_none():
+    assert _build_where_clause(SearchPredicate(), PHOTO_FIELDS) is None
+
+
+# ---------------------------------------------------------------------------
+# DATE_RANGE — "dateTaken" field
+# ---------------------------------------------------------------------------
+
+
+def test_date_lo_produces_timestamp_clause():
+    result = _clause({"dateTaken": RangeFilter(lo=datetime(2024, 1, 1))})
+    assert "date_taken >= TIMESTAMP '2024-01-01 00:00:00'" in result
+
+
+def test_date_hi_produces_timestamp_clause():
+    result = _clause({"dateTaken": RangeFilter(hi=datetime(2024, 12, 31, 23, 59, 59))})
+    assert "date_taken <= TIMESTAMP '2024-12-31 23:59:59'" in result
+
+
+def test_date_both_bounds_produce_two_clauses():
+    result = _clause({"dateTaken": RangeFilter(lo=datetime(2024, 1, 1), hi=datetime(2024, 12, 31))})
+    assert "date_taken >=" in result
+    assert "date_taken <=" in result
+
+
+def test_date_none_bounds_produce_no_clause():
+    """RangeFilter() with no bounds contributes nothing."""
+    result = _clause({"dateTaken": RangeFilter()})
+    assert result is None
+
+
+def test_date_timezone_stripped_before_format():
+    """Timezone-aware lo is treated as naive in the SQL literal."""
+
+    dt = datetime(2024, 6, 15, 10, 30, tzinfo=UTC)
+    result = _clause({"dateTaken": RangeFilter(lo=dt)})
+    assert "TIMESTAMP '2024-06-15 10:30:00'" in result
+
+
+# ---------------------------------------------------------------------------
+# INT_RANGE — rating / width / height / orientation
+# ---------------------------------------------------------------------------
+
+
+def test_rating_lo():
+    result = _clause({"rating": RangeFilter(lo=3)})
+    assert "rating >= 3" in result
+
+
+def test_rating_hi():
+    result = _clause({"rating": RangeFilter(hi=5)})
+    assert "rating <= 5" in result
+
+
+def test_rating_both_bounds():
+    result = _clause({"rating": RangeFilter(lo=3, hi=5)})
+    assert "rating >= 3" in result
+    assert "rating <= 5" in result
+
+
+def test_width_lo():
+    result = _clause({"width": RangeFilter(lo=1920)})
+    assert "width >= 1920" in result
+
+
+def test_height_hi():
+    result = _clause({"height": RangeFilter(hi=1080)})
+    assert "height <= 1080" in result
+
+
+def test_orientation_lo():
+    result = _clause({"orientation": RangeFilter(lo=1)})
+    assert "orientation >= 1" in result
+
+
+# ---------------------------------------------------------------------------
+# STRING_COLLECTION — tags
+# ---------------------------------------------------------------------------
+
+
+def test_single_tag_produces_array_has_clause():
+    result = _clause({"tags": CollectionFilter(values=("travel",))})
+    assert "array_has(tag_terms, 'travel')" in result
+
+
+def test_multiple_tags_each_produce_a_clause():
+    result = _clause({"tags": CollectionFilter(values=("travel", "paris"))})
+    assert "array_has(tag_terms, 'travel')" in result
+    assert "array_has(tag_terms, 'paris')" in result
+
+
+def test_tag_path_is_normalized_and_folded():
+    result = _clause({"tags": CollectionFilter(values=(" Places | Europe ",))})
+    assert "array_has(tag_terms, 'places|europe')" in result
+
+
+def test_tag_value_is_case_insensitive():
+    result = _clause({"tags": CollectionFilter(values=("PARIS", "Travel"))})
+    assert "array_has(tag_terms, 'paris')" in result
+    assert "array_has(tag_terms, 'travel')" in result
+
+
+def test_empty_tag_value_still_produces_a_clause():
+    result = _clause({"tags": CollectionFilter(values=("",))})
+    assert "array_has(tag_terms, '')" in result
+
+
+def test_tag_with_single_quote_is_escaped():
+    result = _clause({"tags": CollectionFilter(values=("it's",))})
+    assert "array_has(tag_terms, 'it''s')" in result
+
+
+# ---------------------------------------------------------------------------
+# STRING_MATCH — make / model
+# ---------------------------------------------------------------------------
+
+
+def test_make_produces_lower_like_clause():
+    result = _clause({"make": StringFilter(value="nikon")})
+    assert "lower(make) LIKE '%nikon%'" in result
+
+
+def test_make_value_is_lowercased():
+    result = _clause({"make": StringFilter(value="NIKON")})
+    assert "lower(make) LIKE '%nikon%'" in result
+
+
+def test_model_produces_lower_like_clause():
+    result = _clause({"model": StringFilter(value="r5")})
+    assert "lower(model) LIKE '%r5%'" in result
+
+
+def test_string_value_with_quote_is_escaped():
+    result = _clause({"make": StringFilter(value="brand's")})
+    assert "lower(make) LIKE '%brand''s%'" in result
+
+
+def test_startswith_mode_produces_prefix_like_clause():
+    result = _clause({"directory": StringFilter(value="2024", mode="startswith")})
+    assert "lower(partition) LIKE '2024%'" in result
+
+
+def test_contains_mode_produces_substring_like_clause():
+    result = _clause({"directory": StringFilter(value="holiday", mode="contains")})
+    assert "lower(partition) LIKE '%holiday%'" in result
+
+
+def test_startswith_value_is_lowercased():
+    result = _clause({"directory": StringFilter(value="2024/SUMMER", mode="startswith")})
+    assert "lower(partition) LIKE '2024/summer%'" in result
+
+
+def test_exact_mode_produces_equality_clause():
+    result = _clause({"make": StringFilter(value="Nikon", mode="exact")})
+    assert "lower(make) = 'nikon'" in result
+
+
+def test_exact_mode_value_is_lowercased():
+    result = _clause({"make": StringFilter(value="CANON EOS R5", mode="exact")})
+    assert "lower(make) = 'canon eos r5'" in result
+
+
+# ---------------------------------------------------------------------------
+# GPS_BOX
+# ---------------------------------------------------------------------------
+
+
+def test_gps_always_adds_null_check_even_with_no_bounds():
+    """All-None GpsBoxFilter still rejects photos with no GPS data."""
+    result = _clause({"gps": GpsBoxFilter()})
+    assert "gps_lat IS NOT NULL" in result
+    assert "gps_lon IS NOT NULL" in result
+
+
+def test_gps_min_lat():
+    result = _clause({"gps": GpsBoxFilter(min_lat=48.0)})
+    assert "gps_lat >= 48.0" in result
+
+
+def test_gps_max_lat():
+    result = _clause({"gps": GpsBoxFilter(max_lat=49.0)})
+    assert "gps_lat <= 49.0" in result
+
+
+def test_gps_min_lon():
+    result = _clause({"gps": GpsBoxFilter(min_lon=2.0)})
+    assert "gps_lon >= 2.0" in result
+
+
+def test_gps_max_lon():
+    result = _clause({"gps": GpsBoxFilter(max_lon=3.0)})
+    assert "gps_lon <= 3.0" in result
+
+
+def test_gps_full_bbox_produces_all_clauses():
+    result = _clause({"gps": GpsBoxFilter(min_lat=48.0, max_lat=49.0, min_lon=2.0, max_lon=3.0)})
+    assert "gps_lat IS NOT NULL" in result
+    assert "gps_lat >= 48.0" in result
+    assert "gps_lat <= 49.0" in result
+    assert "gps_lon >= 2.0" in result
+    assert "gps_lon <= 3.0" in result
+
+
+# ---------------------------------------------------------------------------
+# Combined filters
+# ---------------------------------------------------------------------------
+
+
+def test_combined_date_and_rating_joined_with_and():
+    result = _clause(
+        {"dateTaken": RangeFilter(lo=datetime(2024, 1, 1)), "rating": RangeFilter(lo=4)}
+    )
+    assert "date_taken >=" in result
+    assert "rating >= 4" in result
+    assert " AND " in result
+
+
+def test_combined_tag_and_gps():
+    result = _clause(
+        {"tags": CollectionFilter(values=("travel",)), "gps": GpsBoxFilter(min_lat=48.0)}
+    )
+    assert "array_has(tag_terms, 'travel')" in result
+    assert "gps_lat IS NOT NULL" in result
+    assert "gps_lat >= 48.0" in result
+
+
+def test_combined_make_and_rating():
+    result = _clause({"make": StringFilter(value="canon"), "rating": RangeFilter(lo=3, hi=5)})
+    assert "lower(make) LIKE '%canon%'" in result
+    assert "rating >= 3" in result
+    assert "rating <= 5" in result
+
+
+# ---------------------------------------------------------------------------
+# FilterGroup — logic operators
+# ---------------------------------------------------------------------------
+
+
+def _group(group: FilterGroup) -> str | None:
+    return _build_group(group, PHOTO_FIELDS)
+
+
+def test_and_group_joins_clauses_with_and():
+    group = FilterGroup(
+        logic="AND",
+        children=[
+            FilterLeaf("make", StringFilter(value="nikon")),
+            FilterLeaf("rating", RangeFilter(lo=4)),
+        ],
+    )
+    result = _group(group)
+    assert "lower(make) LIKE '%nikon%'" in result
+    assert "rating >= 4" in result
+    assert " AND " in result
+    assert " OR " not in result
+
+
+def test_or_group_joins_clauses_with_or():
+    group = FilterGroup(
+        logic="OR",
+        children=[
+            FilterLeaf("make", StringFilter(value="nikon")),
+            FilterLeaf("make", StringFilter(value="canon")),
+        ],
+    )
+    result = _group(group)
+    assert "lower(make) LIKE '%nikon%'" in result
+    assert "lower(make) LIKE '%canon%'" in result
+    assert " OR " in result
+    assert " AND " not in result
+
+
+def test_or_group_wraps_in_parens():
+    group = FilterGroup(
+        logic="OR",
+        children=[
+            FilterLeaf("make", StringFilter(value="nikon")),
+            FilterLeaf("make", StringFilter(value="canon")),
+        ],
+    )
+    result = _group(group)
+    assert result.startswith("(")
+    assert result.endswith(")")
+
+
+def test_nested_group_composes_correctly():
+    # AND of (date) AND (make=nikon OR make=canon)
+    group = FilterGroup(
+        logic="AND",
+        children=[
+            FilterLeaf("dateTaken", RangeFilter(lo=datetime(2024, 1, 1))),
+            FilterGroup(
+                logic="OR",
+                children=[
+                    FilterLeaf("make", StringFilter(value="nikon")),
+                    FilterLeaf("make", StringFilter(value="canon")),
+                ],
+            ),
+        ],
+    )
+    result = _group(group)
+    assert "date_taken >=" in result
+    assert "(lower(make) LIKE '%nikon%' OR lower(make) LIKE '%canon%')" in result
+    assert result.count(" AND ") >= 1
+
+
+def test_single_child_group_no_extra_parens():
+    group = FilterGroup(
+        logic="OR",
+        children=[
+            FilterLeaf("make", StringFilter(value="nikon")),
+        ],
+    )
+    result = _group(group)
+    # Single-child OR group — no parens needed
+    assert result == "lower(make) LIKE '%nikon%'"
+
+
+def test_empty_group_returns_none():
+    assert _group(FilterGroup()) is None
+
+
+# ---------------------------------------------------------------------------
+# Video fields — BOOL (hasAudio), FLOAT_RANGE (durationSeconds), mediaType
+# ---------------------------------------------------------------------------
+
+
+def test_has_audio_true_clause():
+    from wally.searcher import BoolFilter
+
+    result = _clause({"hasAudio": BoolFilter(value=True)})
+    assert result == "has_audio = TRUE"
+
+
+def test_has_audio_false_clause():
+    from wally.searcher import BoolFilter
+
+    result = _clause({"hasAudio": BoolFilter(value=False)})
+    assert result == "has_audio = FALSE"
+
+
+def test_media_type_exact_clause():
+    result = _clause({"mediaType": StringFilter(value="video", mode="exact")})
+    assert result == "lower(media_type) = 'video'"
+
+
+def test_duration_float_range_clause():
+    result = _clause({"durationSeconds": RangeFilter(lo=30, hi=120)})
+    assert "duration_seconds >= 30" in result
+    assert "duration_seconds <= 120" in result

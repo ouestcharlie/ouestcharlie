@@ -29,7 +29,7 @@ Claude Desktop (MCP client)
 
 **MCP interface to Claude**: Woof exposes OuEstCharlie operations as MCP tools. Claude calls these tools in response to user requests ("index my photos", "show me photos from last July", "what's the indexing status?"). Woof translates Claude's tool calls into agent invocations or direct operations.
 
-**Gallery UI (MCP App)**: Woof serves an interactive gallery as an MCP App — an HTML/JS application rendered inside Claude Desktop's conversation via a sandboxed iframe. The gallery calls back to Woof tools for search, browsing, and navigation. This gives Claude Desktop a rich visual interface for photo browsing without requiring a separate application. See [woof/woof_LLD_rationale.md](woof/woof_LLD_rationale.md) for the MCP Apps analysis.
+**Gallery UI (MCP App)**: Woof serves an interactive gallery as an MCP App — an HTML/JS application rendered inside Claude Desktop's conversation via a sandboxed iframe. The gallery calls back to Woof tools for search, browsing, and navigation. This gives Claude Desktop a rich visual interface for photo browsing without requiring a separate application. See [woof_LLD_rationale.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLD_rationale.md) for the MCP Apps analysis.
 
 **Local thumbnail server**: Woof runs a local HTTP server (loopback only) that serves thumbnail AVIF containers and on-demand JPEG previews to the gallery iframe. Thumbnails never leave the device — they are not sent through Claude's API. The gallery iframe's Content Security Policy is configured to allow fetching from this local origin only.
 
@@ -528,8 +528,8 @@ Woof detects stuck agents via progress token timeout (default: 5 minutes without
 MCP tool definitions (name, description, and JSON Schema input/output) live in each agent's tool registrations and are discoverable at runtime via the standard `tools/list` request.
 
 For detailed Woof requirements, design, and rationale, see:
-- [woof/woof_LLR.md](woof/woof_LLR.md) — low-level requirements
-- [woof/woof_LLD.md](woof/woof_LLD.md) — low-level design
+- [woof_LLR.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLR.md) — low-level requirements
+- [woof_LLD.md](https://github.com/ouestcharlie/ouestcharlie-woof/blob/master/doc/design/woof_LLD.md) — low-level design
 - [HLD_rationale.md § Agent Communication](HLD_rationale.md#agent-communication-why-mcp) — rationale for the MCP approach
 
 ## Efficient Filtering and Pruning
@@ -604,3 +604,20 @@ On cloud providers, security relies on **scoped credentials** issued per agent:
 - Local storage: Not applicable (no network transit).
 
 See [HLD_rationale.md § Security](HLD_rationale.md#security-and-access-control) for detailed per-backend enforcement mechanisms and threat model analysis.
+
+## Code Organization
+
+The Python code is split across three kinds of repository:
+
+| Repository | Contents | Released as |
+|---|---|---|
+| `ouestcharlie` (this repo) | Architecture docs, and the agents as one [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) under `packages/`: the toolkit (`py-toolkit`), Whitebeard and Wally | Three PyPI packages (`ouestcharlie-py-toolkit`, `ouestcharlie-whitebeard`, `ouestcharlie-wally`), one wheel each |
+| `ouestcharlie-woof` | Woof: MCP server, gallery UI, agent orchestration, MCPB bundle and Claude plugin | `ouestcharlie-woof` on PyPI, MCPB bundle, plugin |
+| `ouestcharlie-imageproc` | Rust `image-proc` coprocessor | `ouestcharlie-imageproc` on PyPI (platform wheels) |
+
+- **One workspace, independent packages**: the three agent packages share one `uv.lock` and one development environment, but each keeps its own `pyproject.toml`, dependencies, PyPI name and wheel. An agent depends on the toolkit like any other package (`ouestcharlie-py-toolkit~=X.Y`); inside the workspace that dependency resolves to the local source.
+- **One shared version**: the three packages always have the same version. One `vX.Y.Z` tag publishes all three, even if one of them has no change.
+- **Woof gets the agents from PyPI**, as end users do, pinned with `~=`. For development it uses editable path sources pointing at a `ouestcharlie` checkout next to the Woof one (`../ouestcharlie/packages/...`).
+- **imageproc has its own version line**, since it changes for different reasons (native build, wire protocol) than the agents.
+
+See [HLD_rationale.md § Code Organization](HLD_rationale.md#code-organization-one-repo-one-workspace-independent-packages) for the alternatives considered.

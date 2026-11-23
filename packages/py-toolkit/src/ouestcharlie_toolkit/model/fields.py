@@ -1,0 +1,244 @@
+"""Field type configuration for searchable photo metadata.
+
+This module defines the searchable field taxonomy and the default configuration
+that drives matching, pruning, and query building in Wally (and future agents),
+as well as XmpSidecar → PhotoEntry mapping in Whitebeard.
+
+Adding a new searchable field requires only adding a FieldDef entry to PHOTO_FIELDS —
+no changes needed in matching, pruning, indexing, or summary serialisation logic.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum, auto
+
+
+class FieldType(Enum):
+    """Taxonomy of searchable field types, each with distinct match semantics."""
+
+    DATE_RANGE = auto()  # datetime min/max bounds; partition summary pruning via min/max
+    INT_RANGE = auto()  # int min/max bounds; partition summary pruning via min/max
+    FLOAT_RANGE = auto()  # float min/max bounds; no summary pruning
+    STRING_COLLECTION = auto()  # list[str] with AND exact match (e.g. tags)
+    STRING_MATCH = auto()  # str with case-insensitive substring match
+    BOOL = auto()  # bool; exact true/false match, presence-aware (null excluded)
+    TEXT = auto()  # str; full-text search via FTS index, returns relevance score
+    GPS_BOX = auto()  # (lat, lon) point
+    DESCRIPTIVE = auto()  # placeholder: future similarity/embedding match
+
+
+@dataclass(frozen=True)
+class FieldDef:
+    """Definition of a single searchable field.
+
+    Attributes:
+        name:               Logical field name; used as the JSON key in partition summaries
+                            and as the key in SearchPredicate.filters.
+        type:               Match and pruning semantics for this field.
+        entry_attr:         Attribute name on PhotoEntry that holds this field's value.
+        summary_range:  True if the field contributes min/max range stats to the
+                        summary. Applies to DATE_RANGE, INT_RANGE, and FLOAT_RANGE
+                        fields. (Partition pruning, when implemented, is a separate
+                        concern scoped to DATE_RANGE/INT_RANGE only.)
+        summary_facet:  True if the field contributes categorical value counts
+                        (``string_facets``) to the summary. Set only on low-cardinality
+                        STRING_MATCH fields (e.g. media type, codec); leaving it False
+                        keeps high-cardinality columns (make, model, directory) out.
+        sidecar_attr:   Attribute name on XmpSidecar to read when building a PhotoEntry.
+                        None means the field has no direct XmpSidecar source (e.g. it is
+                        derived or supplied externally, like filename or content_hash).
+        label:          Human-readable label for UI / list_search_fields.
+    """
+
+    name: str
+    type: FieldType
+    entry_attr: str
+    summary_range: bool = False
+    summary_facet: bool = False
+    sidecar_attr: str | None = None
+    label: str | None = None
+
+
+# Searchable field configuration for OuEstCharlie photos.
+#
+# Fields with summary_range=True contribute min/max stats to the partition summary
+# and support partition-level range pruning (DATE_RANGE and INT_RANGE only).
+# Fields without sidecar_attr are populated by the caller (e.g. filename, content_hash).
+PHOTO_FIELDS: list[FieldDef] = [
+    # Date/time range — partition summary pruning via min/max
+    FieldDef(
+        name="dateTaken",
+        type=FieldType.DATE_RANGE,
+        entry_attr="date_taken",
+        summary_range=True,
+        sidecar_attr="date_taken",
+    ),
+    # Integer ranges — partition summary pruning via min/max
+    FieldDef(
+        name="rating",
+        type=FieldType.INT_RANGE,
+        entry_attr="rating",
+        summary_range=True,
+        sidecar_attr="rating",
+    ),
+    FieldDef(
+        name="width",
+        type=FieldType.INT_RANGE,
+        entry_attr="width",
+        summary_range=True,
+        sidecar_attr="width",
+    ),
+    FieldDef(
+        name="height",
+        type=FieldType.INT_RANGE,
+        entry_attr="height",
+        summary_range=True,
+        sidecar_attr="height",
+    ),
+    FieldDef(
+        name="orientation",
+        type=FieldType.INT_RANGE,
+        entry_attr="orientation",
+        sidecar_attr="orientation",
+    ),
+    # String collection — AND case-insensitive match on list elements
+    FieldDef(
+        name="tags",
+        type=FieldType.STRING_COLLECTION,
+        entry_attr="tags",
+        sidecar_attr="tags",
+        label="Tags (hierarchical, '|'-separated, case-insensitive)",
+    ),
+    # String match — case-insensitive substring
+    # Note: XmpSidecar uses camera_make/camera_model; PhotoEntry uses make/model
+    FieldDef(
+        name="make",
+        type=FieldType.STRING_MATCH,
+        entry_attr="make",
+        sidecar_attr="camera_make",
+    ),
+    FieldDef(
+        name="model",
+        type=FieldType.STRING_MATCH,
+        entry_attr="model",
+        sidecar_attr="camera_model",
+    ),
+    # GPS bounding box
+    FieldDef(
+        name="gps",
+        type=FieldType.GPS_BOX,
+        entry_attr="gps",
+        sidecar_attr="gps",
+    ),
+    # Full-text search on dc:description caption
+    FieldDef(
+        name="description",
+        type=FieldType.TEXT,
+        entry_attr="description",
+        sidecar_attr="description",
+        label="Description",
+    ),
+    # Camera shoot settings — float/int range filters
+    FieldDef(
+        name="isoSpeed",
+        type=FieldType.INT_RANGE,
+        entry_attr="iso_speed",
+        sidecar_attr="iso_speed",
+        label="ISO speed",
+    ),
+    FieldDef(
+        name="aperture",
+        type=FieldType.FLOAT_RANGE,
+        entry_attr="aperture",
+        sidecar_attr="aperture",
+        label="Aperture (f-number)",
+    ),
+    FieldDef(
+        name="exposureTime",
+        type=FieldType.FLOAT_RANGE,
+        entry_attr="exposure_time",
+        sidecar_attr="exposure_time",
+        label="Exposure time (s)",
+    ),
+    FieldDef(
+        name="focalLength",
+        type=FieldType.FLOAT_RANGE,
+        entry_attr="focal_length",
+        sidecar_attr="focal_length",
+        label="Focal length (mm)",
+    ),
+    FieldDef(
+        name="focalLength35mm",
+        type=FieldType.INT_RANGE,
+        entry_attr="focal_length_35mm",
+        sidecar_attr="focal_length_35mm",
+        label="Focal length 35mm equiv.",
+    ),
+    FieldDef(
+        name="lensModel",
+        type=FieldType.STRING_MATCH,
+        entry_attr="lens_model",
+        sidecar_attr="lens_model",
+        label="Lens",
+    ),
+    # Directory / partition path — no sidecar_attr, assigned by the indexer
+    FieldDef(
+        name="directory",
+        type=FieldType.STRING_MATCH,
+        entry_attr="partition",
+        label="Directory",
+    ),
+    # Video fields. Present on every entry (media_type defaults to "photo"); the
+    # video-only ones are null for photos and drive the gallery's media branching.
+    FieldDef(
+        name="mediaType",
+        type=FieldType.STRING_MATCH,
+        entry_attr="media_type",
+        summary_facet=True,
+        sidecar_attr="media_type",
+        label="Media type",
+    ),
+    FieldDef(
+        name="durationSeconds",
+        type=FieldType.FLOAT_RANGE,
+        entry_attr="duration_seconds",
+        summary_range=True,
+        sidecar_attr="duration_seconds",
+        label="Duration (s)",
+    ),
+    FieldDef(
+        name="videoCodec",
+        type=FieldType.STRING_MATCH,
+        entry_attr="video_codec",
+        summary_facet=True,
+        sidecar_attr="video_codec",
+        label="Video codec",
+    ),
+    FieldDef(
+        name="hasAudio",
+        type=FieldType.BOOL,
+        entry_attr="has_audio",
+        sidecar_attr="has_audio",
+        label="Has audio",
+    ),
+]
+
+
+# Field types whose values map to a single scalar LanceDB column and can drive
+# an ORDER BY. Collections (tags), GPS boxes, full-text, and descriptive fields
+# have no meaningful total order and are excluded.
+SORTABLE_FIELD_TYPES: frozenset[FieldType] = frozenset(
+    {
+        FieldType.DATE_RANGE,
+        FieldType.INT_RANGE,
+        FieldType.FLOAT_RANGE,
+        FieldType.STRING_MATCH,
+        FieldType.BOOL,
+    }
+)
+
+
+def is_sortable(fdef: FieldDef) -> bool:
+    """Return True if a field can be used as a ``sort_by`` key."""
+    return fdef.type in SORTABLE_FIELD_TYPES

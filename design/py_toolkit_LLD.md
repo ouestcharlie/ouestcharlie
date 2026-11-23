@@ -1,0 +1,124 @@
+# Python Toolkit Low-Level Design
+
+This document details the shared Python toolkit used by all OuEstCharlie agents. For technology selection rationale, see [agent_LLD_rationale.md](agent_LLD_rationale.md).
+
+## Overview
+
+The Python toolkit (`ouestcharlie-toolkit`) is a shared library that provides five core capabilities to all agents:
+
+1. **MCP integration** — MCP server lifecycle, tool registration, progress reporting, and logging
+2. **LanceDB columnar index** — schema-validated per-photo store at `.ouestcharlie/index.lance/`, upsert/delete operations, thumbnail location columns; partition-level stats computed by DuckDB aggregate queries over the index
+3. **Summary marker with consistency** — `summary.json` atomic read-modify-write with optimistic concurrency
+4. **XMP read-edit with consistency** — sidecar read-modify-write with optimistic concurrency and field-level semantics
+5. **Image processing** — thumbnail AVIF grid assembly and on-demand JPEG preview generation, delegated to `ouestcharlie-imageproc`
+
+Agents import the toolkit and focus on their domain logic (indexing, enrichment, search). The toolkit handles protocol, storage, and consistency concerns.
+
+V1 scope: local filesystem backend only. The `storage.Backend` abstraction enables adding cloud backends (S3, GCS, ADLS Gen2) later without changing agent code.
+
+## Package Layout
+
+Seven sub-packages, lowest layer first:
+
+| Sub-package | Content |
+|---|---|
+| `storage` | `Backend` protocol, `LocalBackend`, `CloudMountedBackend`, `.ouestcharlie/` paths (`layout.py`), `content_hash` |
+| `model` | `PHOTO_FIELDS`, tag paths, `PhotoEntry`, `XmpSidecar`, summaries, thumbnail grid layout, `SCHEMA_VERSION` |
+| `media` | `Photo` (`photo/`: EXIF, HEIF, AVIF/JXL/RAW display size), `Video` (`video/`: MP4/MOV boxes, capture time), file suffixes |
+| `xmp` | sidecar naming, namespaces, value conversions, `parse_xmp`, `serialize_xmp`, `XmpStore` |
+| `index` | Lance schema and row conversion, migrations, `FtsFilter` / `sql_quote`, `LanceIndex`, `compute_summary`, `SummaryStore` |
+| `renditions` | AVIF thumbnail grids and JPEG previews |
+| `agent` | `AgentBase`, `PerPhotoContext`, `setup_logging` |
+
+Rules, checked by `tests/test_architecture.py`:
+- A module imports only from its own sub-package or a lower one. `xmp` sits above `media` because `XmpStore.read_or_create_from_picture` extracts metadata with `Photo` and `Video`; `media` never imports `xmp`.
+- Inside the toolkit, modules import leaf modules (`ouestcharlie_toolkit.index.query`), never a sub-package `__init__`, which only re-exports for agents. This keeps package initialization free of cycles.
+- Only `renditions` imports `ouestcharlie_imageproc`. Importing `index` or `xmp` does not load it.
+- Imports are absolute (ruff `TID252`, `ban-relative-imports = "all"`).
+
+Agents import from a sub-package `__init__` and never use a `_private` name. The package root re-exports the most used names.
+
+## Backend Abstraction
+
+`VersionToken` is opaque to callers — `mtime` for local, `ETag` or `generation` for future remote backends.
+
+`content_hash` is BLAKE3 truncated to 128 bits, base64url-encoded (22 chars). Future remote backends can override to fetch the provider checksum without downloading the file.
+
+**Cross-process locking**: `write_conditional` holds two locks simultaneously for the stat-check + rename — a per-path `threading.Lock` (required on macOS/BSD where `flock` is per-process and does not serialize threads within the same process) and a `_CrossProcessLock` on a `<filename>.lock` sidecar file. Lock files are always created inside `.ouestcharlie/`, never next to original photos.
+
+**Cloud-Mounted Backend**: overrides `read()` with an exponential-backoff retry loop — Windows CF API may return partial data for dehydrated placeholder files.
+
+## LanceDB Columnar Index (`index/`)
+
+The LanceDB index replaces per-partition `manifest.json` files as the primary per-photo metadata store (schema version 3+). It is a single columnar table containing one row per photo across all partitions.
+
+### Index location
+
+By default the index lives at `.ouestcharlie/index.lance/` within the backend root. On Windows, when the library root is a UNC path or a mapped drive that resolves to one, `object_store` (the Rust storage layer under Lance) cannot reliably open files on the network share. The index is then redirected to a local NTFS path (`%LOCALAPPDATA%\ouestcharlie\indexes\<library_name>\`) set by Woof and propagated via `WOOF_BACKEND_CONFIG`. LanceDB accepts local filesystem paths directly — no `file://` URI conversion.
+
+All operations use the `AsyncTable` API. `merge_insert().execute()` returns a coroutine and is awaited directly, not run in a thread.
+
+### Schema non-obvious choices
+
+GPS and thumbnail columns use **flat nullable columns** rather than structs. LanceDB returns null struct fields as default-valued dicts, not `None`, which would require extra handling at every read site.
+
+`date_taken` is stored timezone-naive. All comparisons must strip timezone before comparing.
+
+`tags` holds the photo's leaf tag paths (`Places|Europe|France`, see [Hierarchical tags](#hierarchical-tags)). `tag_terms` is derived from it at write time: every ancestor path plus every level name, folded with `model.tags.fold` (NFC, then lowercase: `places`, `places|europe`, `places|europe|france`, `europe`, `france`). Tag filters fold the value the same way, so matching ignores case while the predicate stays an exact match the index can serve; lowercasing `tag_terms` at query time would bypass the index. `tags` keeps the user's spelling. Tag filters are `array_has(tag_terms, …)`, so one exact-match predicate serves both a subtree query (`Places|Europe`) and a name-at-any-level query (`France`). A `LABEL_LIST` scalar index backs it; only the writer (`open(create_if_missing=True)`) creates it, and `maintain()` brings rows written since then under it. A semi-structured JSON tree column was rejected: the any-level query has no simple JSON-path form, and JSON columns get no scalar index.
+
+### `search_where` pagination
+
+Two queries are issued: a lightweight `select(["tags"])` scan for total count and tag facets, then a page query with `order_by` / `offset` / `limit` pushed down to LanceDB (available since 0.33). A `filename` tiebreaker is appended to the ordering for deterministic pagination across pages.
+
+### Partition summary
+
+DuckDB runs in `asyncio.to_thread` because it is CPU-bound sync. The Lance query before it uses native async — no `to_thread` wrapping needed there.
+
+Tag facets are counted per hierarchy node: each path in `tags` contributes all its ancestors, and a photo counts once per node even when several of its paths share it (`COUNT(DISTINCT rid)`). The `tag_facets` keys are therefore paths, ancestors included; clients rebuild the tree by splitting on `|`. Spellings that differ only by case are one node, grouped by `lower(nfc_normalize(node))` (the SQL twin of `model.tags.fold`, which is why `fold` uses `lower()` rather than `casefold()`) and shown with the most frequent spelling, ties broken by sort order. Keys are rebuilt top down from the parent's key (`_tag_facet_counts`), so a child never disagrees with its parent's spelling.
+
+## `summary.json` Consistency
+
+`SummaryStore` (formerly `ManifestStore`) reads and writes `summary.json`. Unknown fields in `summary.json` are captured in `_extra: dict` and round-tripped through serialization, following HLD schema evolution rules. Agents must never drop fields they don't recognize.
+
+## XMP Consistency
+
+**Conflict-free merges**: agents write non-overlapping field sets (face tags, scene tags, EXIF fields). Most retry scenarios in the optimistic concurrency loop are therefore trivial merges with no actual conflict.
+
+**Third-party sidecar preservation**: `XmpSidecar` holds `_raw_xml` so fields written by Lightroom, darktable, or ExifTool survive round-trips through OuEstCharlie.
+
+**Dual sidecar naming convention**: `xmp_path_for(photo_path, with_photo_extension=bool)` supports both the full-extension form (`IMG_001.cr3.xmp` — darktable, digiKam, Immich's preferred form) and the extension-stripped form (`IMG_001.xmp` — Lightroom). `XmpStore.read()`/`write()` resolve to whichever form already exists on disk (full-extension checked first), and `create()` always writes new sidecars in the full-extension form. This means existing libraries need no migration, and an update to an existing sidecar never forks a second file under the other convention.
+
+**Namespace registration**: Python 3.13 `ET.register_namespace()` rejects prefixes matching `ns\d+` — use `ext{counter}` as fallback.
+
+### Sharing `NAME.EXT.xmp` with darktable
+
+darktable uses the same sidecar file. It reads it at import, then rewrites it from its database at every sync: it keeps the `ouestcharlie:*` attributes and other unknown fields, but writes dates EXIF-style without offset and adds `darktable:history` and its other data, which OuEstCharlie keeps in `_extra`.
+
+**Simple properties in both forms**: XMP allows a simple property as an attribute of `rdf:Description` (Exiv2/darktable's form, e.g. `exif:GPSLatitude="48,51.396000N"`) or as a child element. `parse_xmp` reads every known simple property (`xmp/namespaces.py`, `_SIMPLE_PROPS`) in both forms, and both forms are known, so neither lands in `_extra` and no duplicate is written. `serialize_xmp` keeps its own form (attributes, GPS as child elements).
+
+**Dates**: `xmp.values.parse_iso_datetime` accepts ISO 8601, darktable's EXIF style `YYYY:MM:DD HH:MM:SS[.fraction]`, and XMP partial dates (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`, rounded to the start of the period). Without an offset the result is naive. `XmpStore.read_or_create_from_picture` then recovers the offset of an existing photo sidecar from the photo's EXIF (`OffsetTimeOriginal`/`OffsetTime`, via `Photo.exif_datetime()`), only when the EXIF local date-time equals the sidecar's to the second; otherwise the sidecar's date, which the user may have corrected, stays naive. The offset is never written back: it is recovered again at each index (only sidecars with a naive date pay the EXIF read), and darktable would strip it at its next sync anyway. `XmpStore.read()`, used by `read_modify_write`, does not recover it.
+
+**XMP Basic namespace**: `xmp:Rating` is in `http://ns.adobe.com/xap/1.0/`, where darktable, Lightroom and digiKam read it. Before OEC-63 OuEstCharlie wrote it in the wrong `http://ns.adobe.com/xmp/1.0/` (`NS_XMP_LEGACY`): that one is read as a fallback and dropped on write, so existing sidecars switch namespace at their next write. darktable's default rating of 1 at import is read as a real rating.
+
+### Hierarchical tags
+
+`model/tags.py` holds the path helpers. A tag is a `|`-separated path (darktable/Lightroom convention); a flat tag is a one-level path. `XmpSidecar.tags` holds the user's leaf paths: an ancestor also present as its own entry is implied and dropped. Paths are normalized on read (levels trimmed, empty levels dropped, duplicates removed). Stored paths keep their case; search, facets and excluded tag prefixes ignore it.
+
+**Read** (`parse_xmp`): `lr:hierarchicalSubject` takes precedence, as in darktable, which reads tags only from it when it exists. A `dc:subject` term that is not a level of any hierarchical path was added by a `dc:subject`-only tool and is kept as a one-level path; the other `dc:subject` terms are just the flattened levels. Without `lr:hierarchicalSubject`, each `dc:subject` term is read as a path. `rdf:Bag` and `rdf:Seq` are both accepted.
+
+**Excluded tag prefixes**: paths equal to or below one of the library's `excluded_tag_prefixes` (default `["darktable"]`: darktable's automatic `darktable|format|jpg`, `darktable|changed`, …) are moved to `XmpSidecar._excluded_tags` instead of `tags`. Matching is on whole levels and ignores case (`darktable` excludes `Darktable|format`, not `darktable-fans`). The setting comes from `WOOF_BACKEND_CONFIG` via `AgentBase.excluded_tag_prefixes` (default when the key is absent, e.g. an older Woof) and is applied by `XmpStore`, so it takes effect at the next full reindex. Excluded paths are never indexed but are written back.
+
+**Write** (`serialize_xmp`): `lr:hierarchicalSubject` gets the user's paths (flat tags too: darktable would otherwise ignore them once the element exists) followed by `_excluded_tags`; `dc:subject` gets every level of every user path, deduplicated in first-seen order — darktable's and Lightroom's default "include parents" export. Neither element is written when both lists are empty.
+
+**`XPKeywords` tag bootstrap**: `Photo.extract_exif()` seeds `tags` from the Windows-specific `Exif.Image.XPKeywords` EXIF field (semicolon-separated) when creating a brand-new sidecar. This is a one-time bootstrap for libraries whose only keyword source is Windows Explorer/Photos tagging — it is not an authoritative or bidirectional sync with `dc:subject`, since `extract_exif()` never reads an existing sidecar and therefore never overwrites tags added later via Woof or Darktable.
+
+**`ImageDescription`/`XPSubject` description bootstrap**: `Photo.extract_exif()` seeds `description` from `Exif.Image.ImageDescription` (checked first) or, if empty, the Windows-specific `Exif.Image.XPSubject` field, when creating a brand-new sidecar. Same one-time-bootstrap caveat as `XPKeywords`: not an authoritative or bidirectional sync with `dc:description`, since `extract_exif()` never overwrites a description added later (manually or by AI enrichment).
+
+## References
+
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+- [MCP Specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25)
+- [pyexiv2](https://github.com/LeoHsiao1/pyexiv2) — EXIF/IPTC/XMP read-write
+- [XMP Specification (ISO 16684)](https://www.iso.org/standard/75163.html)
+- [HLD § Consistency Model](HLD.md#consistency-model) — optimistic concurrency design
+- [image-proc LLD](https://github.com/ouestcharlie/ouestcharlie-imageproc/blob/main/imageproc_LLD.md) — Rust coprocessor protocol
