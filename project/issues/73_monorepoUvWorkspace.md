@@ -179,16 +179,21 @@ sets of `_build.yml`, `build.yml`, `publish.yml`)
   and their dependencies, so a package that imports something it does not declare still
   passes locally. Today's CI catches this because it tests the installed wheel. Each job
   keeps that check:
-  1. `uv sync --locked --package <name> --no-editable`: only that package, its
+  1. `uv sync --locked --package <name> --no-editable --group dev`: only that package, its
      dependencies and the dev group, at the locked versions. `--no-editable` installs the
      workspace packages (the package and py-toolkit) as built wheels, so tests import the
      installed package, not `src/`. This replaces the planned separate "install the wheel
      in a clean venv" step: same check, and it uses the lock file.
   2. Tests (from the package folder) and mypy (`--config-file packages/<name>/pyproject.toml`).
   3. `uv build --package <name>`, uploaded as the artifact `publish.yml` releases.
-- **Checked:** `uv sync --package <name>` does install the root `[dependency-groups] dev`
-  (pytest, mypy, ruff), and leaves the other packages out (Whitebeard is not importable in
-  the Wally environment). No per-package dev group is needed.
+- **Checked, version-dependent:** with uv 0.11, `uv sync --package <name>` installs the
+  root `[dependency-groups] dev` and rejects `--group dev`. With uv 0.13 it leaves the root
+  group out (the first CI run failed: no pytest) and needs `--group dev`. CI therefore
+  installs uv `~=0.13` and passes `--group dev`, and the root `pyproject.toml` sets
+  `[tool.uv] required-version = "~=0.13"` so local uv matches. Either way the other packages are left out
+  (Whitebeard is not importable in the Wally environment), and no per-package dev group is
+  needed. Local development (`uv sync --all-packages`) installs the root dev group with
+  both versions.
 - `publish.yml`: a `vX.Y.Z` tag builds and publishes all three wheels, all at version
   `X.Y.Z` (shared version, see Decisions). The upload uses `skip-existing: true`, so
   rerunning the workflow after a failed upload completes the release (see Decisions).
@@ -264,9 +269,10 @@ GitHub and on PyPI pages. After the merge:
   - `github.com/ouestcharlie/ouestcharlie-<name>/blob/master/<file>` →
     `github.com/ouestcharlie/ouestcharlie/blob/master/packages/<name>/<file>`
   - Here `<name>` is `py-toolkit`, `whitebeard` or `wally`.
-- Inside the monorepo, all links are relative paths, including from a package README to
-  `design/` or to another package. Trade-off: relative links in a package README don't
-  resolve on its PyPI page.
+- Inside the monorepo, links are relative paths, except in the three package READMEs. A
+  package README is also its PyPI project description, where relative links don't
+  resolve, so its links to `design/`, to the repo root and to the other packages are full
+  GitHub URLs on `master` (changed after the wheel comparison, see Implementation).
 - The packages' LLDs (`py_toolkit_LLD.md`, `py_toolkit_LLD_rationale.md`,
   `whitebeard_LLD.md`, `wally_LLD.md`) move to `design/`, next to the HLD. Paths for
   them in the tables below are their original package paths.
@@ -409,6 +415,32 @@ grep -rnE "github.com/ouestcharlie/ouestcharlie-(py-toolkit|wally|whitebeard)" \
 
 ---
 
+## Implementation
+
+- **2026-11-23:** Import PR merged on `master` of `ouestcharlie/ouestcharlie` (sections 1–7,
+  9 and 10 for this repo).
+- **Done:** Dependabot and CodeQL enabled on the `ouestcharlie/ouestcharlie` repo.
+- **Done, Woof switch (Decision 9):** merged in the Woof repo. `[tool.uv.sources]` →
+  `../ouestcharlie/packages/...`; `_build.yml` checks out `ouestcharlie/ouestcharlie` once;
+  `README_DEV.md` updated. The same PR updated the Woof design docs and aligned Woof's ruff
+  pin with the monorepo (`~=0.17.0`, patch updates ignored by Dependabot).
+- **Done, old repos at the move (section 8):** README notice pointing to
+  `packages/<name>` in each repo; no open issues left to transfer.
+- **Done:** PyPI trusted publishers for `ouestcharlie/ouestcharlie` created (section 6).
+- **Done, wheel comparison** (Verification): `uv build --package <name>` on `master` against
+  the 0.17.0 wheels on PyPI. Same file list for all three packages. Changes: `METADATA`
+  (project URLs and README); Whitebeard and Wally `agent.py`, relative imports made absolute
+  (Decision 4); Wally `searcher.py`, one docstring corrected. `Requires-Dist` unchanged. The
+  READMEs used relative links, which don't resolve on PyPI: the 16 links of the three
+  package READMEs are now full GitHub URLs (section 10).
+- **Decided:** no TestPyPI trial. The old repos get no emergency fixes once the first
+  monorepo release is out, so their "no longer maintained" notice stands.
+- **Next:** the first `vX.Y.Z` tag.
+- **Remaining after that:** end of the transition period (section 8): remove the old
+  repos' trusted publishers on PyPI, then archive the three repos.
+
+---
+
 ## Verification
 
 - `uv sync --all-packages --locked` succeeds from the root; only one `.venv` and one `uv.lock`.
@@ -416,5 +448,7 @@ grep -rnE "github.com/ouestcharlie/ouestcharlie-(py-toolkit|wally|whitebeard)" \
 - `uv build --package <name>` for each package gives a wheel with the same files as its
   0.17.0 wheel (only metadata such as URLs changes).
 - `git log --follow packages/wally/src/wally/__main__.py` shows the history from before the move.
-- Trial release to TestPyPI publishes all three wheels; installing them in a clean venv works.
+- The first `vX.Y.Z` tag publishes all three wheels to PyPI; installing them in a clean venv
+  works. (No TestPyPI trial: the first real release is the test, and a failed upload is
+  completed by rerunning the job, see Decisions 6.)
 - Woof still runs against the moved packages.

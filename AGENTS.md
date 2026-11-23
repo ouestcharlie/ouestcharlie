@@ -101,6 +101,9 @@ One `uv.lock` and one `.venv` at the repo root; each package keeps its own `pypr
 - **Document only what is non-obvious**: Don't document APIs or what code already makes clear by reading it. Only document constraints, architectural decisions, non-obvious invariants, and cross-cutting behavior not visible from a single file.
 - **Don't reference issue numbers in code or docs**: Issue numbers (e.g. "OEC-39") are only valid at the time of their implementation and become stale afterwards. Explain the rationale directly instead of pointing to an issue.
 - **Links**: relative paths within this repo, full GitHub URLs to other repos.
+  Exception: in `packages/*/README.md`, every link is a full GitHub URL on `master`
+  (e.g. `https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md`). Each
+  package README is also its PyPI project description, where relative links don't resolve.
 
 ## Package Rules
 

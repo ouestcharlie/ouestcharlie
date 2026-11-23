@@ -8,11 +8,11 @@ Wally is the search/consumption agent for OuEstCharlie. It is **stateless and re
 
 | Document | Purpose |
 |----------|---------|
-| [wally_LLD.md](../../design/wally_LLD.md) | Low-level design |
+| [wally_LLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/wally_LLD.md) | Low-level design |
 
 ## Package Structure
 
-See [wally_LLD.md](../../design/wally_LLD.md)
+See [wally_LLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/wally_LLD.md)
 
 ## Installation
 
@@ -28,7 +28,7 @@ System prerequisites:
 
 ### From source (development)
 
-This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
+This package is part of the [ouestcharlie uv workspace](https://github.com/ouestcharlie/ouestcharlie): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
 
 ```bash
 git clone https://github.com/ouestcharlie/ouestcharlie.git
@@ -67,10 +67,10 @@ npx @modelcontextprotocol/inspector
 
 | Repository | Purpose |
 |------------|---------|
-| [ouestcharlie](../../) | Architecture docs, HLR/HLD, and the agent packages below |
-| [ouestcharlie/packages/py-toolkit](../py-toolkit/) | Python toolkit for agents |
-| [ouestcharlie/packages/whitebeard](../whitebeard/) | Indexing agent |
-| [**ouestcharlie/packages/wally** *(this package)*](./) | Search/consumption agent |
+| [ouestcharlie](https://github.com/ouestcharlie/ouestcharlie) | Architecture docs, HLR/HLD, and the agent packages below |
+| [ouestcharlie/packages/py-toolkit](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/py-toolkit) | Python toolkit for agents |
+| [ouestcharlie/packages/whitebeard](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/whitebeard) | Indexing agent |
+| [**ouestcharlie/packages/wally** *(this package)*](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/wally) | Search/consumption agent |
 | [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof) | Woof controller |
 
-See [ouestcharlie/HLD.md](../../design/HLD.md) for the overall system architecture.
+See [ouestcharlie/HLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md) for the overall system architecture.

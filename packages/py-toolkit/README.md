@@ -46,7 +46,7 @@ System prerequisites:
 
 ### From source (development)
 
-This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
+This package is part of the [ouestcharlie uv workspace](https://github.com/ouestcharlie/ouestcharlie): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
 
 ```bash
 git clone https://github.com/ouestcharlie/ouestcharlie.git
@@ -148,7 +148,7 @@ export WOOF_BACKEND_CONFIG='{"type": "filesystem", "root": "/Users/alice/Photos"
 
 ## Architecture
 
-See [py_toolkit_LLD.md](../../design/py_toolkit_LLD.md) for the design.
+See [py_toolkit_LLD.md](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/py_toolkit_LLD.md) for the design.
 
 Key design principles:
 
@@ -163,7 +163,7 @@ Key design principles:
 - [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP Specification](https://modelcontextprotocol.io/specification/2025-11-25)
 - [pyexiv2](https://github.com/LeoHsiao1/pyexiv2)
-- [OuEstCharlie HLD](../../design/HLD.md)
+- [OuEstCharlie HLD](https://github.com/ouestcharlie/ouestcharlie/blob/master/design/HLD.md)
 
 ## License
 

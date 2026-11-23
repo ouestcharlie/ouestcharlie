@@ -33,7 +33,7 @@ System prerequisites:
 
 ### From source (development)
 
-This package is part of the [ouestcharlie uv workspace](../../): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
+This package is part of the [ouestcharlie uv workspace](https://github.com/ouestcharlie/ouestcharlie): py-toolkit, Whitebeard and Wally share one `uv.lock` and one `.venv` at the repo root.
 
 ```bash
 git clone https://github.com/ouestcharlie/ouestcharlie.git
@@ -73,8 +73,8 @@ WOOF_BACKEND_CONFIG='{"type":"filesystem","root":"/path/to/photos"}' \
 
 | Repository | Purpose |
 |------------|---------|
-| [ouestcharlie](../../) | Architecture docs, HLR/HLD, and the agent packages below |
-| [ouestcharlie/packages/py-toolkit](../py-toolkit/) | Python toolkit for agents |
-| [**ouestcharlie/packages/whitebeard** *(this package)*](./) | Indexing agent |
-| [ouestcharlie/packages/wally](../wally/) | Search/consumption agent |
+| [ouestcharlie](https://github.com/ouestcharlie/ouestcharlie) | Architecture docs, HLR/HLD, and the agent packages below |
+| [ouestcharlie/packages/py-toolkit](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/py-toolkit) | Python toolkit for agents |
+| [**ouestcharlie/packages/whitebeard** *(this package)*](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/whitebeard) | Indexing agent |
+| [ouestcharlie/packages/wally](https://github.com/ouestcharlie/ouestcharlie/tree/master/packages/wally) | Search/consumption agent |
 | [ouestcharlie-woof](https://github.com/ouestcharlie/ouestcharlie-woof/) | Woof controller |
